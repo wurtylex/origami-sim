@@ -1,0 +1,395 @@
+/* =============================================================================
+   Theme tokens
+   ============================================================================= */
+
+:root {
+  --paper:        #F2EDE1;
+  --paper-raised: #FAF6EC;
+  --paper-shadow: rgba(24, 20, 15, 0.12);
+
+  --ink:          #18140F;
+  --ink-soft:     #4A4540;
+  --pencil:       #8A8075;
+  --pencil-light: #C4BDB0;
+  --rule:         #2C2620;
+
+  --mountain:     #B8352C;
+  --valley:       #2C4B8C;
+  --flat:         #C4BDB0;
+
+  --font-display: 'Cormorant Garamond', 'Georgia', serif;
+  --font-mono:    'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* =============================================================================
+   Reset + base
+   ============================================================================= */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--paper);
+  background-image:
+    radial-gradient(circle at 15% 10%, rgba(255, 255, 255, 0.5), transparent 40%),
+    radial-gradient(circle at 85% 80%, rgba(0, 0, 0, 0.025), transparent 50%);
+  color: var(--ink);
+  font-family: var(--font-display);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+/* =============================================================================
+   Masthead
+   ============================================================================= */
+
+.masthead {
+  padding: 1.75rem 2.5rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+
+.masthead h1 {
+  font-size: 2.1rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.masthead h1 em {
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.imprint {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pencil);
+  text-align: right;
+  line-height: 1.6;
+}
+
+.imprint span { display: block; }
+
+/* =============================================================================
+   Layout
+   ============================================================================= */
+
+.layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  min-height: 0;
+  height: 100%;
+}
+
+.sidebar {
+  border-right: 1px solid var(--rule);
+  padding: 1.75rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  overflow-y: auto;
+}
+
+.stage {
+  height: 100%;        /* fill the grid row */
+  min-height: 0;       /* allow flex/grid children to shrink */
+}
+
+/* =============================================================================
+   Sidebar panels
+   ============================================================================= */
+
+.panel h2 {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--pencil);
+  margin-bottom: 0.75rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.panel h2::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+  opacity: 0.25;
+}
+
+/* Upload button styled as a drop target */
+.upload {
+  display: block;
+  padding: 1rem;
+  border: 1px dashed var(--rule);
+  text-align: center;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  color: var(--ink-soft);
+  margin-bottom: 0.5rem;
+}
+
+.upload:hover {
+  background: rgba(0, 0, 0, 0.035);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.upload.drag-over {
+  background: rgba(24, 20, 15, 0.06);
+  border-color: var(--ink);
+  border-style: solid;
+  color: var(--ink);
+}
+
+/* Secondary "ghost" button */
+button.ghost {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  background: transparent;
+  border: 1px solid transparent;
+  text-align: left;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 120ms;
+}
+
+button.ghost:hover {
+  border-color: var(--pencil-light);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* View-mode toggle */
+.toggle {
+  display: flex;
+  border: 1px solid var(--rule);
+}
+
+.toggle button {
+  flex: 1;
+  padding: 0.65rem 0.5rem;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  color: var(--ink-soft);
+  transition: all 120ms;
+}
+
+.toggle button.active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.toggle button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.toggle button:not(.active):not(:disabled):hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* Fold-amount slider — only visible in 3D mode */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--ink-soft);
+}
+
+.slider-label {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pencil);
+  white-space: nowrap;
+}
+
+#fold-slider {
+  flex: 1;
+  accent-color: var(--ink);
+}
+
+.slider-value {
+  min-width: 3em;
+  text-align: right;
+  color: var(--ink);
+}
+
+/* 3D canvas — sits in the same spot as the SVG, swapped by the view toggle */
+.three-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+}
+.three-canvas:active { cursor: grabbing; }
+
+/* Legend */
+.legend {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+
+.legend .count {
+  margin-left: auto;
+  color: var(--pencil);
+  font-size: 0.65rem;
+}
+
+.swatch { width: 28px; flex-shrink: 0; }
+.swatch.m { height: 2px; background: var(--mountain); }
+.swatch.v { height: 0; border-top: 2px dashed var(--valley); }
+.swatch.b { height: 2.5px; background: var(--ink); }
+.swatch.f { height: 1px; background: var(--pencil-light); }
+.swatch.u { height: 1.5px; background: var(--pencil); opacity: 0.6; }
+
+/* Stats dossier */
+.stats {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem 1rem;
+}
+
+.stats dt {
+  color: var(--pencil);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 0.6rem;
+  align-self: center;
+}
+
+.stats dd {
+  font-size: 0.85rem;
+  text-align: right;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.hint {
+  font-family: var(--font-mono);
+  font-size: 0.63rem;
+  color: var(--pencil);
+  letter-spacing: 0.05em;
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid var(--pencil-light);
+}
+
+.hint kbd {
+  font-family: inherit;
+  background: var(--paper-raised);
+  border: 1px solid var(--pencil-light);
+  padding: 0 0.25rem;
+  font-size: 0.9em;
+}
+
+.error-note {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--mountain);
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid var(--mountain);
+  margin-top: 0.5rem;
+  word-break: break-word;
+}
+
+/* =============================================================================
+   Paper field (the canvas)
+   ============================================================================= */
+
+.paper-field {
+  width: 100%;
+  height: 100%;
+  position: relative;  /* ensure absolute children anchor to it */
+}
+
+.pattern {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  user-select: none;
+}
+
+.pattern:active { cursor: grabbing; }
+
+/* Corner marks */
+.corner {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pencil);
+  pointer-events: none;
+}
+
+.corner.tl { top: 0.75rem; left: 0.9rem; }
+.corner.tr { top: 0.75rem; right: 0.9rem; }
+.corner.bl { bottom: 0.75rem; left: 0.9rem; }
+.corner.br {
+  bottom: 0.75rem;
+  right: 0.9rem;
+  font-style: italic;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  text-transform: none;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+/* =============================================================================
+   Responsive
+   ============================================================================= */
+
+@media (max-width: 780px) {
+  body { overflow: auto; }
+  .layout { grid-template-columns: 1fr; }
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+}
+
+[hidden] {
+  display: none !important;
+}
