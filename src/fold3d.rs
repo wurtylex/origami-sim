@@ -1,6 +1,6 @@
 //! Physically-based origami folder using XPBD with sub-stepping.
 //!
-//! Bar-and-hinge model (Schenk & Guest 2010, Ghassaei et al. 2018) solved with XPBD (Macklin et al. 2016)
+//! Bar-and-hinge model (Filipov et al. 2016) solved with XPBD (Macklin et al. 2016)
 
 use crate::fold::Frame;
 use crate::geom::Vec3;
