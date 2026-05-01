@@ -179,6 +179,81 @@ button.ghost:hover {
   background: rgba(0, 0, 0, 0.02);
 }
 
+button.ghost.active-mode {
+  background: rgba(184, 53, 44, 0.1);
+  border-color: var(--mountain);
+  color: var(--mountain);
+}
+
+/* Edit mode panel */
+#edit-mode-panel {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--pencil-light);
+}
+
+.edit-subtitle {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--pencil);
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.type-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+}
+
+.type-btn {
+  padding: 0.4rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--pencil-light);
+  font-family: inherit;
+  font-size: 0.65rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 120ms;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.type-btn:hover {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: var(--ink);
+}
+
+.type-btn.active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+.type-btn[data-type="M"].active {
+  background: var(--mountain);
+  border-color: var(--mountain);
+}
+
+.type-btn[data-type="V"].active {
+  background: var(--valley);
+  border-color: var(--valley);
+}
+
+.type-btn[data-type="B"].active {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.type-btn[data-type="F"].active {
+  background: var(--flat);
+  border-color: var(--flat);
+  color: var(--ink);
+}
+
 /* View-mode toggle */
 .toggle {
   display: flex;

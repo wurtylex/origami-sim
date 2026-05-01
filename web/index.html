@@ -34,7 +34,18 @@
       <h2>Source</h2>
       <label class="upload" for="file-input">Upload .fold file</label>
       <input type="file" id="file-input" accept=".fold,.json,application/json" hidden>
-      <button class="ghost" id="load-sample">Load sample</button>
+      <button id="edit-crease-mode" class="ghost">Edit Pattern</button>
+      <div id="edit-mode-panel" hidden>
+        <h3 class="edit-subtitle">Crease Type</h3>
+        <div class="type-selector">
+          <button data-type="M" class="type-btn" title="Mountain">Mountain</button>
+          <button data-type="V" class="type-btn" title="Valley">Valley</button>
+          <button data-type="B" class="type-btn" title="Border">Border</button>
+          <button data-type="F" class="type-btn" title="Flat">Flat</button>
+          <button data-type="U" class="type-btn active" title="Unassigned">Unassigned</button>
+        </div>
+      </div>
+      <button id="export" class="ghost">Export to Fold</button>
       <div class="error-note" id="error-note" hidden></div>
     </section>
 

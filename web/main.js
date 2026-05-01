@@ -6,7 +6,7 @@
 // have an `update` (or `render2d`) function.
 
 import init, { FoldDocument } from './pkg/origami.js';
-import { render2d, attachPanZoom2d } from './render2d.js';
+import { render2d, attachPanZoom2d, enableDrawingMode, disableDrawingMode, svgToFold, setSelectedCreaseType } from './render2d.js';
 import { create3dRenderer } from './render3d.js';
 
 // -----------------------------------------------------------------------------
@@ -24,6 +24,10 @@ const el = {
   sliderRow:     document.getElementById('fold-slider-row'),
   slider:        document.getElementById('fold-slider'),
   sliderValue:   document.getElementById('fold-value'),
+  editBtn:       document.getElementById('edit-crease-mode'),
+  editModePanel: document.getElementById('edit-mode-panel'),
+  typeButtons:   document.querySelectorAll('.type-btn'),
+  exportBtn:     document.getElementById('export'),
   stat: {
     title:    document.getElementById('stat-title'),
     vertices: document.getElementById('stat-vertices'),
@@ -54,6 +58,8 @@ let doc = null;
 let mode = 'cp';        // 'cp' | '3d'
 let foldT = 1.0;
 let renderer3d = null;  // lazily created
+let isEditMode = false;
+let selectedCreaseType = 'U';  // 'M' | 'V' | 'B' | 'F' | 'U'
 
 // -----------------------------------------------------------------------------
 // Render dispatch
@@ -144,6 +150,43 @@ function setupSlider() {
   });
 }
 
+function setupEditMode() {
+  console.log('Setting up edit mode. Button:', el.editBtn);
+  if (!el.editBtn) {
+    console.error('Edit button not found!');
+    return;
+  }
+
+  // Setup type button handlers
+  el.typeButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedCreaseType = btn.dataset.type;
+      setSelectedCreaseType(selectedCreaseType);
+      el.typeButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  el.editBtn.addEventListener('click', () => {
+    console.log('Edit button clicked! isEditMode was:', isEditMode);
+    isEditMode = !isEditMode;
+
+    // Visual feedback for the button
+    el.editBtn.textContent = isEditMode ? '[Save Changes]' : '[Edit Pattern]';
+    el.editBtn.classList.toggle('active-mode', isEditMode);
+
+    // Show/hide edit mode panel
+    el.editModePanel.hidden = !isEditMode;
+
+    if (isEditMode) {
+      enablePatternEditing();
+    } else {
+      disablePatternEditing();
+      // Logic to update your .FOLD data structure here
+    }
+  });
+}
+
 // -----------------------------------------------------------------------------
 // File I/O
 // -----------------------------------------------------------------------------
@@ -192,17 +235,45 @@ function clearError() {
   el.errorNote.hidden = true;
 }
 
+function enablePatternEditing() {
+  console.log('Entering edit mode');
+  setSelectedCreaseType(selectedCreaseType);
+  enableDrawingMode(el.svg, selectedCreaseType);
+}
+
+function disablePatternEditing() {
+  console.log('Exiting edit mode');
+  disableDrawingMode(el.svg);
+
+  // Convert the SVG back to FOLD format and update the document
+  const foldData = svgToFold(el.svg);
+  if (foldData && doc) {
+    // Create a new FoldDocument from the updated data
+    try {
+      const foldJson = JSON.stringify(foldData);
+      doc = new FoldDocument(foldJson);
+      render();
+    } catch (err) {
+      showError(`Could not update pattern: ${err.message || err}`);
+    }
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Boot
 // -----------------------------------------------------------------------------
 
 async function main() {
+  console.log('Starting app');
   await init();
   attachPanZoom2d(el.svg);
   setupFileInput();
   setupViewToggle();
   setupSlider();
   render();
+  console.log('About to setup edit mode');
+  setupEditMode();
+  console.log('Setup complete');
 }
 
 main().catch(err => {
