@@ -78,6 +78,8 @@ export function render2d(doc, mode, svg) {
       const scaled = style.dash.split(',').map(n => parseFloat(n) * strokeScale).join(',');
       line.setAttribute('stroke-dasharray', scaled);
     }
+    // Store the edge assignment so it survives SVG serialization
+    line.setAttribute('data-type', edge.kind);
     world.appendChild(line);
   }
 
@@ -100,7 +102,7 @@ export function render2d(doc, mode, svg) {
   return data;
 }
 
-export function svgToFold(svg) {
+export async function svgToFold(svg) {
   // 1. Locate the 'world' group where the lines and dots live
   const world = svg.querySelector('g');
   if (!world) return null;
@@ -140,7 +142,7 @@ export function svgToFold(svg) {
 
     edges.push([v1, v2]);
 
-    // 3. Get assignment from data-type attribute if present, otherwise reverse-map from color
+    // Get assignment from data-type attribute if present, otherwise reverse-map from color
     let assignment = line.getAttribute('data-type');
     if (!assignment) {
       // Fall back to reverse-mapping the stroke color for compatibility
@@ -155,16 +157,141 @@ export function svgToFold(svg) {
     edgeAssignment.push(assignment);
   });
 
-  // 4. Construct the FOLD object
-  return {
-    file_spec: 1.1,
-    file_creator: "Crease Pattern Inspector",
-    file_classes: ["singleModel"],
-    frame_classes: ["creasePattern"],
-    vertices_coords: vertices,
-    edges_vertices: edges,
-    edges_assignment: edgeAssignment
-  };
+  // 3. Compute edges_foldAngle based on assignment
+  const foldAngles = edgeAssignment.map(assignment => {
+    switch (assignment) {
+      case 'M': return 180;
+      case 'V': return -180;
+      case 'B': return 0;
+      case 'F': return 0;
+      case 'U': return 180;
+      default: return 0;
+    }
+  });
+
+  // 4. Try to compute faces using Rabbit Ear
+  let earGraph = null;
+  try {
+    const mod = await import('rabbit-ear');
+    const ear = mod.default ?? mod;
+    console.log('Rabbit Ear loaded, keys:', Object.keys(ear).slice(0, 10));
+
+    let converter = null;
+    if (typeof ear.convert?.svgToFold === 'function') {
+      converter = ear.convert.svgToFold;
+      console.log('Using ear.convert.svgToFold');
+    } else if (typeof ear.svgToFold === 'function') {
+      converter = ear.svgToFold;
+      console.log('Using ear.svgToFold');
+    }
+
+    if (converter) {
+      const serializer = new XMLSerializer();
+      const svgText = serializer.serializeToString(svg);
+      console.log('SVG text length:', svgText.length);
+
+      earGraph = converter(svgText);
+      console.log('Rabbit Ear graph keys:', Object.keys(earGraph || {}).slice(0, 15));
+      if (earGraph && earGraph.vertices_coords) {
+        console.log('Rabbit Ear vertices:', earGraph.vertices_coords.length, 'edges:', earGraph.edges_vertices?.length);
+      }
+    }
+  } catch (err) {
+    console.error('Could not compute faces with Rabbit Ear:', err.message);
+  }
+
+  // 5. Construct the FOLD object
+  // Use Rabbit Ear's graph if available (it has proper face topology),
+  // but overlay our custom edge assignments
+  let fold;
+
+  // 5. Build a map of our assignments keyed by coordinate pairs for robust matching
+  // This ensures assignments are preserved even when Rabbit Ear re-parses the SVG
+  const ourAssignmentMap = new Map();
+  lines.forEach((line, idx) => {
+    const x1 = parseFloat(line.getAttribute('x1'));
+    const y1 = parseFloat(line.getAttribute('y1'));
+    const x2 = parseFloat(line.getAttribute('x2'));
+    const y2 = parseFloat(line.getAttribute('y2'));
+
+    // Use our stored data-type if available, otherwise use the computed assignment
+    let assignment = line.getAttribute('data-type') || edgeAssignment[idx] || 'U';
+
+    // Create a canonical key (always with smaller coordinate first for consistent lookup)
+    const key = `${Math.min(x1, x2).toFixed(6)},${Math.min(y1, y2).toFixed(6)}-${Math.max(x1, x2).toFixed(6)},${Math.max(y1, y2).toFixed(6)}`;
+    ourAssignmentMap.set(key, assignment);
+    console.log(`Stored assignment for edge: ${key} = ${assignment}`);
+  });
+
+  if (earGraph && earGraph.vertices_coords && earGraph.edges_vertices) {
+    console.log('Using Rabbit Ear graph as base');
+    // Create assignment mapping: overlay our custom assignments onto Rabbit Ear's edges
+    const earAssignment = (earGraph.edges_assignment || []).slice(); // copy
+
+    // For each Rabbit Ear edge, try to find our custom assignment
+    earGraph.edges_vertices.forEach((edge, eIdx) => {
+      const [ev1, ev2] = edge;
+      const [ex1, ey1] = earGraph.vertices_coords[ev1];
+      const [ex2, ey2] = earGraph.vertices_coords[ev2];
+
+      // Create a canonical key matching how we stored them
+      const key = `${Math.min(ex1, ex2).toFixed(6)},${Math.min(ey1, ey2).toFixed(6)}-${Math.max(ex1, ex2).toFixed(6)},${Math.max(ey1, ey2).toFixed(6)}`;
+
+      if (ourAssignmentMap.has(key)) {
+        const assignment = ourAssignmentMap.get(key);
+        earAssignment[eIdx] = assignment;
+        console.log(`Applied custom assignment to Rabbit Ear edge ${eIdx}: ${assignment}`);
+      }
+    });
+
+    fold = {
+      file_spec: 1.1,
+      file_creator: "Crease Pattern Inspector",
+      file_classes: ["singleModel"],
+      frame_classes: ["creasePattern"],
+      vertices_coords: earGraph.vertices_coords,
+      edges_vertices: earGraph.edges_vertices,
+      edges_assignment: earAssignment,
+      edges_foldAngle: earGraph.edges_foldAngle || earAssignment.map(a => {
+        switch (a) {
+          case 'M': return 180;
+          case 'V': return -180;
+          default: return 0;
+        }
+      }),
+    };
+
+    if (earGraph.vertices_edges) fold.vertices_edges = earGraph.vertices_edges;
+    if (earGraph.faces_vertices) fold.faces_vertices = earGraph.faces_vertices;
+    if (earGraph.faces_edges) fold.faces_edges = earGraph.faces_edges;
+
+  } else {
+    // 6. Fallback: construct FOLD without face topology
+    console.log('Rabbit Ear unavailable, using local computation (no faces)');
+    // Compute vertices_edges locally
+    const verticesEdges = vertices.map(() => []);
+    edges.forEach((edge, idx) => {
+      const [v1, v2] = edge;
+      verticesEdges[v1].push(idx);
+      verticesEdges[v2].push(idx);
+    });
+
+    fold = {
+      file_spec: 1.1,
+      file_creator: "Crease Pattern Inspector",
+      file_classes: ["singleModel"],
+      frame_classes: ["creasePattern"],
+      vertices_coords: vertices,
+      edges_vertices: edges,
+      edges_assignment: edgeAssignment,
+      edges_foldAngle: foldAngles,
+      vertices_edges: verticesEdges,
+    };
+  }
+
+  // 7. Done
+  console.log('Final FOLD keys:', Object.keys(fold));
+  return fold;
 }
 
 export function resetView2d(svg) {

@@ -167,7 +167,7 @@ function setupEditMode() {
     });
   });
 
-  el.editBtn.addEventListener('click', () => {
+  el.editBtn.addEventListener('click', async () => {
     console.log('Edit button clicked! isEditMode was:', isEditMode);
     isEditMode = !isEditMode;
 
@@ -181,7 +181,7 @@ function setupEditMode() {
     if (isEditMode) {
       enablePatternEditing();
     } else {
-      disablePatternEditing();
+      await disablePatternEditing();
       // Logic to update your .FOLD data structure here
     }
   });
@@ -215,6 +215,43 @@ function setupFileInput() {
   });
 }
 
+function setupExport() {
+  el.exportBtn.addEventListener('click', async () => {
+    if (!doc) {
+      showError('No pattern loaded. Please upload a FOLD file first.');
+      return;
+    }
+
+    try {
+      const foldData = await svgToFold(el.svg);
+      if (!foldData) {
+        showError('Could not export pattern.');
+        return;
+      }
+
+      // Get the title from the current document or use a default
+      const title = doc.renderJson ? JSON.parse(doc.renderJson('cp')).title || 'pattern' : 'pattern';
+      foldData.title = title;
+
+      const json = JSON.stringify(foldData, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title.replace(/\s+/g, '_')}.fold`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      clearError();
+    } catch (err) {
+      showError(`Could not export pattern: ${err.message || err}`);
+    }
+  });
+}
+
 async function loadFile(file) {
   try {
     const text = await file.text();
@@ -241,21 +278,21 @@ function enablePatternEditing() {
   enableDrawingMode(el.svg, selectedCreaseType);
 }
 
-function disablePatternEditing() {
+async function disablePatternEditing() {
   console.log('Exiting edit mode');
   disableDrawingMode(el.svg);
 
   // Convert the SVG back to FOLD format and update the document
-  const foldData = svgToFold(el.svg);
-  if (foldData && doc) {
-    // Create a new FoldDocument from the updated data
-    try {
+  try {
+    const foldData = await svgToFold(el.svg);
+    if (foldData && doc) {
+      // Create a new FoldDocument from the updated data
       const foldJson = JSON.stringify(foldData);
       doc = new FoldDocument(foldJson);
       render();
-    } catch (err) {
-      showError(`Could not update pattern: ${err.message || err}`);
     }
+  } catch (err) {
+    showError(`Could not update pattern: ${err.message || err}`);
   }
 }
 
@@ -270,6 +307,7 @@ async function main() {
   setupFileInput();
   setupViewToggle();
   setupSlider();
+  setupExport();
   render();
   console.log('About to setup edit mode');
   setupEditMode();
