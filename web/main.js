@@ -368,6 +368,20 @@ async function main() {
   console.log('About to setup edit mode');
   setupEditMode();
   setupThemeSelector();
+
+  // Set up default file
+  try {
+    const response = await fetch('./square.fold');
+    if (response.ok) {
+      const blob = await response.blob();
+      // We create a File object so it's compatible with your loadFile(file) helper
+      const initialFile = new File([blob], "square.fold");
+      await loadFile(initialFile);
+    }
+  } catch (err) {
+    console.warn("Failed to preload default pattern:", err);
+  }
+
   console.log('Setup complete');
 }
 
