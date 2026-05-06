@@ -28,6 +28,7 @@ const el = {
   editModePanel: document.getElementById('edit-mode-panel'),
   typeButtons:   document.querySelectorAll('.type-btn'),
   exportBtn:     document.getElementById('export'),
+  themeSelect:   document.getElementById('theme-select'),
   stat: {
     title:    document.getElementById('stat-title'),
     vertices: document.getElementById('stat-vertices'),
@@ -48,6 +49,48 @@ const el = {
     dims:  document.getElementById('corner-dims'),
     title: document.getElementById('corner-title'),
   },
+};
+
+const themes = {
+  bewd: {
+    '--paper':        '#012a4a',
+    '--paper-raised': '#013a63',
+    // '--paper-shadow': rgba(24, 20, 15, 0.12),
+    '--ink':          '#a9d6e5',
+    '--ink-soft':     '#89c2d9',
+    '--pencil':       '#a9d6e5',
+    '--pencil-light': '#89c2d9',
+    '--rule':         '#61a5c2',
+    '--mountain':     '#B8352C',
+    '--valley':       '#2C4B8C',
+    '--flat':         '#18140F',
+  },
+  lf: {
+    '--paper':        '#33415c',
+    '--paper-raised': '#5c677d',
+    // '--paper-shadow': rgba(24, 20, 15, 0.12),
+    '--ink':          '#C4BDB0',
+    '--ink-soft':     '#C4BDB0',
+    '--pencil':       '#979dac',
+    '--pencil-light': '#C4BDB0',
+    '--rule':         '#979dac',
+    '--mountain':     '#B8352C',
+    '--valley':       '#2C4B8C',
+    '--flat':         '#a9d6e5',
+  },
+  al: {
+    '--paper':        '#F2EDE1',
+    '--paper-raised': '#FAF6EC',
+    // '--paper-shadow': rgba(24, 20, 15, 0.12),
+    '--ink':          '#18140F',
+    '--ink-soft':     '#4A4540',
+    '--pencil':       '#8A8075',
+    '--pencil-light': '#C4BDB0',
+    '--rule':         '#2C2620',
+    '--mountain':     '#B8352C',
+    '--valley':       '#2C4B8C',
+    '--flat':         '#C4BDB0',
+  }
 };
 
 // -----------------------------------------------------------------------------
@@ -187,6 +230,18 @@ function setupEditMode() {
   });
 }
 
+
+function setupThemeSelector() {
+  el.themeSelect.addEventListener('change', (e) => {
+    const selectedTheme = themes[e.target.value];
+    console.log('picked theme' + e.target.value)
+    // Loop through the selected theme and update CSS variables
+    for (const [property, value] of Object.entries(selectedTheme)) {
+      document.documentElement.style.setProperty(property, value);
+    }
+  });
+}
+
 // -----------------------------------------------------------------------------
 // File I/O
 // -----------------------------------------------------------------------------
@@ -214,6 +269,7 @@ function setupFileInput() {
     if (file) loadFile(file);
   });
 }
+
 
 function setupExport() {
   el.exportBtn.addEventListener('click', async () => {
@@ -311,6 +367,7 @@ async function main() {
   render();
   console.log('About to setup edit mode');
   setupEditMode();
+  setupThemeSelector();
   console.log('Setup complete');
 }
 
