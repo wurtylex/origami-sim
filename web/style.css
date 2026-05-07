@@ -3,15 +3,15 @@
    ============================================================================= */
 
 :root {
-  --paper:        #F2EDE1;
-  --paper-raised: #FAF6EC;
+  --paper:        #012a4a;
+  --paper-raised: #013a63;
   --paper-shadow: rgba(24, 20, 15, 0.12);
 
-  --ink:          #18140F;
-  --ink-soft:     #4A4540;
-  --pencil:       #8A8075;
-  --pencil-light: #C4BDB0;
-  --rule:         #2C2620;
+  --ink:          #a9d6e5;
+  --ink-soft:     #89c2d9;
+  --pencil:       #a9d6e5;
+  --pencil-light: #89c2d9;
+  --rule:         #61a5c2;
 
   --mountain:     #B8352C;
   --valley:       #2C4B8C;
@@ -31,9 +31,9 @@ html, body { height: 100%; }
 
 body {
   background: var(--paper);
-  background-image:
+  /* background-image:
     radial-gradient(circle at 15% 10%, rgba(255, 255, 255, 0.5), transparent 40%),
-    radial-gradient(circle at 85% 80%, rgba(0, 0, 0, 0.025), transparent 50%);
+    radial-gradient(circle at 85% 80%, rgba(0, 0, 0, 0.025), transparent 50%); */
   color: var(--ink);
   font-family: var(--font-display);
   display: grid;
@@ -177,6 +177,94 @@ button.ghost {
 button.ghost:hover {
   border-color: var(--pencil-light);
   background: rgba(0, 0, 0, 0.02);
+}
+
+button.ghost.active-mode {
+  background: rgba(184, 53, 44, 0.1);
+  border-color: var(--mountain);
+  color: var(--mountain);
+}
+
+/* Edit mode panel */
+#edit-mode-panel {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--pencil-light);
+}
+
+.edit-subtitle {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--pencil);
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.type-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+}
+
+.type-dropdown {
+  padding: 0.4rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--pencil-light);
+  font-family: inherit;
+  font-size: 0.65rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 120ms;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.type-btn {
+  padding: 0.4rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--pencil-light);
+  font-family: inherit;
+  font-size: 0.65rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 120ms;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.type-btn:hover {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: var(--ink);
+}
+
+.type-btn.active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+.type-btn[data-type="M"].active {
+  background: var(--mountain);
+  border-color: var(--mountain);
+}
+
+.type-btn[data-type="V"].active {
+  background: var(--valley);
+  border-color: var(--valley);
+}
+
+.type-btn[data-type="B"].active {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.type-btn[data-type="F"].active {
+  background: var(--flat);
+  border-color: var(--flat);
+  color: var(--ink);
 }
 
 /* View-mode toggle */

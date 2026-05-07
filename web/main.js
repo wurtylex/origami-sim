@@ -6,7 +6,7 @@
 // have an `update` (or `render2d`) function.
 
 import init, { FoldDocument } from './pkg/origami.js';
-import { render2d, attachPanZoom2d } from './render2d.js';
+import { render2d, attachPanZoom2d, enableDrawingMode, disableDrawingMode, svgToFold, setSelectedCreaseType } from './render2d.js';
 import { create3dRenderer } from './render3d.js';
 
 // -----------------------------------------------------------------------------
@@ -24,6 +24,11 @@ const el = {
   sliderRow:     document.getElementById('fold-slider-row'),
   slider:        document.getElementById('fold-slider'),
   sliderValue:   document.getElementById('fold-value'),
+  editBtn:       document.getElementById('edit-crease-mode'),
+  editModePanel: document.getElementById('edit-mode-panel'),
+  typeButtons:   document.querySelectorAll('.type-btn'),
+  exportBtn:     document.getElementById('export'),
+  themeSelect:   document.getElementById('theme-select'),
   stat: {
     title:    document.getElementById('stat-title'),
     vertices: document.getElementById('stat-vertices'),
@@ -46,6 +51,48 @@ const el = {
   },
 };
 
+const themes = {
+  bewd: {
+    '--paper':        '#012a4a',
+    '--paper-raised': '#013a63',
+    // '--paper-shadow': rgba(24, 20, 15, 0.12),
+    '--ink':          '#a9d6e5',
+    '--ink-soft':     '#89c2d9',
+    '--pencil':       '#a9d6e5',
+    '--pencil-light': '#89c2d9',
+    '--rule':         '#61a5c2',
+    '--mountain':     '#B8352C',
+    '--valley':       '#2C4B8C',
+    '--flat':         '#18140F',
+  },
+  lf: {
+    '--paper':        '#33415c',
+    '--paper-raised': '#5c677d',
+    // '--paper-shadow': rgba(24, 20, 15, 0.12),
+    '--ink':          '#C4BDB0',
+    '--ink-soft':     '#C4BDB0',
+    '--pencil':       '#979dac',
+    '--pencil-light': '#C4BDB0',
+    '--rule':         '#979dac',
+    '--mountain':     '#B8352C',
+    '--valley':       '#2C4B8C',
+    '--flat':         '#a9d6e5',
+  },
+  al: {
+    '--paper':        '#F2EDE1',
+    '--paper-raised': '#FAF6EC',
+    // '--paper-shadow': rgba(24, 20, 15, 0.12),
+    '--ink':          '#18140F',
+    '--ink-soft':     '#4A4540',
+    '--pencil':       '#8A8075',
+    '--pencil-light': '#C4BDB0',
+    '--rule':         '#2C2620',
+    '--mountain':     '#B8352C',
+    '--valley':       '#2C4B8C',
+    '--flat':         '#C4BDB0',
+  }
+};
+
 // -----------------------------------------------------------------------------
 // State
 // -----------------------------------------------------------------------------
@@ -54,6 +101,8 @@ let doc = null;
 let mode = 'cp';        // 'cp' | '3d'
 let foldT = 1.0;
 let renderer3d = null;  // lazily created
+let isEditMode = false;
+let selectedCreaseType = 'U';  // 'M' | 'V' | 'B' | 'F' | 'U'
 
 // -----------------------------------------------------------------------------
 // Render dispatch
@@ -144,6 +193,55 @@ function setupSlider() {
   });
 }
 
+function setupEditMode() {
+  console.log('Setting up edit mode. Button:', el.editBtn);
+  if (!el.editBtn) {
+    console.error('Edit button not found!');
+    return;
+  }
+
+  // Setup type button handlers
+  el.typeButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedCreaseType = btn.dataset.type;
+      setSelectedCreaseType(selectedCreaseType);
+      el.typeButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  el.editBtn.addEventListener('click', async () => {
+    console.log('Edit button clicked! isEditMode was:', isEditMode);
+    isEditMode = !isEditMode;
+
+    // Visual feedback for the button
+    el.editBtn.textContent = isEditMode ? '[Save Changes]' : '[Edit Pattern]';
+    el.editBtn.classList.toggle('active-mode', isEditMode);
+
+    // Show/hide edit mode panel
+    el.editModePanel.hidden = !isEditMode;
+
+    if (isEditMode) {
+      enablePatternEditing();
+    } else {
+      await disablePatternEditing();
+      // Logic to update your .FOLD data structure here
+    }
+  });
+}
+
+
+function setupThemeSelector() {
+  el.themeSelect.addEventListener('change', (e) => {
+    const selectedTheme = themes[e.target.value];
+    console.log('picked theme' + e.target.value)
+    // Loop through the selected theme and update CSS variables
+    for (const [property, value] of Object.entries(selectedTheme)) {
+      document.documentElement.style.setProperty(property, value);
+    }
+  });
+}
+
 // -----------------------------------------------------------------------------
 // File I/O
 // -----------------------------------------------------------------------------
@@ -172,6 +270,44 @@ function setupFileInput() {
   });
 }
 
+
+function setupExport() {
+  el.exportBtn.addEventListener('click', async () => {
+    if (!doc) {
+      showError('No pattern loaded. Please upload a FOLD file first.');
+      return;
+    }
+
+    try {
+      const foldData = await svgToFold(el.svg);
+      if (!foldData) {
+        showError('Could not export pattern.');
+        return;
+      }
+
+      // Get the title from the current document or use a default
+      const title = doc.renderJson ? JSON.parse(doc.renderJson('cp')).title || 'pattern' : 'pattern';
+      foldData.title = title;
+
+      const json = JSON.stringify(foldData, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title.replace(/\s+/g, '_')}.fold`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      clearError();
+    } catch (err) {
+      showError(`Could not export pattern: ${err.message || err}`);
+    }
+  });
+}
+
 async function loadFile(file) {
   try {
     const text = await file.text();
@@ -192,17 +328,61 @@ function clearError() {
   el.errorNote.hidden = true;
 }
 
+function enablePatternEditing() {
+  console.log('Entering edit mode');
+  setSelectedCreaseType(selectedCreaseType);
+  enableDrawingMode(el.svg, selectedCreaseType);
+}
+
+async function disablePatternEditing() {
+  console.log('Exiting edit mode');
+  disableDrawingMode(el.svg);
+
+  // Convert the SVG back to FOLD format and update the document
+  try {
+    const foldData = await svgToFold(el.svg);
+    if (foldData && doc) {
+      // Create a new FoldDocument from the updated data
+      const foldJson = JSON.stringify(foldData);
+      doc = new FoldDocument(foldJson);
+      render();
+    }
+  } catch (err) {
+    showError(`Could not update pattern: ${err.message || err}`);
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Boot
 // -----------------------------------------------------------------------------
 
 async function main() {
+  console.log('Starting app');
   await init();
   attachPanZoom2d(el.svg);
   setupFileInput();
   setupViewToggle();
   setupSlider();
+  setupExport();
   render();
+  console.log('About to setup edit mode');
+  setupEditMode();
+  setupThemeSelector();
+
+  // Set up default file
+  try {
+    const response = await fetch('./square.fold');
+    if (response.ok) {
+      const blob = await response.blob();
+      // We create a File object so it's compatible with your loadFile(file) helper
+      const initialFile = new File([blob], "square.fold");
+      await loadFile(initialFile);
+    }
+  } catch (err) {
+    console.warn("Failed to preload default pattern:", err);
+  }
+
+  console.log('Setup complete');
 }
 
 main().catch(err => {

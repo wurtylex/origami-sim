@@ -12,7 +12,8 @@
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
+    "rabbit-ear": "https://cdn.jsdelivr.net/npm/rabbit-ear@0.9.4/+esm"
   }
 }
 </script>
@@ -34,7 +35,18 @@
       <h2>Source</h2>
       <label class="upload" for="file-input">Upload .fold file</label>
       <input type="file" id="file-input" accept=".fold,.json,application/json" hidden>
-      <button class="ghost" id="load-sample">Load sample</button>
+      <button id="edit-crease-mode" class="ghost">Edit Pattern</button>
+      <div id="edit-mode-panel" hidden>
+        <h3 class="edit-subtitle">Crease Type</h3>
+        <div class="type-selector">
+          <button data-type="M" class="type-btn" title="Mountain">Mountain</button>
+          <button data-type="V" class="type-btn" title="Valley">Valley</button>
+          <button data-type="B" class="type-btn" title="Border">Border</button>
+          <button data-type="F" class="type-btn" title="Flat">Flat</button>
+          <button data-type="U" class="type-btn active" title="Unassigned">Unassigned</button>
+        </div>
+      </div>
+      <button id="export" class="ghost">Export to Fold</button>
       <div class="error-note" id="error-note" hidden></div>
     </section>
 
@@ -71,6 +83,15 @@
         <dt>Faces</dt>       <dd id="stat-faces">—</dd>
         <dt>File spec</dt>   <dd id="stat-spec">—</dd>
       </dl>
+    </section>
+
+    <section class="panel">
+      <h2>Appearance</h2>
+      <select id="theme-select" class="type-btn" style="width: 100%; padding: 8px;">
+        <option value="bewd">Blue Eyes White Dragon</option>
+        <option value="lf">I Got That Fog In Me</option>
+        <option value="al">Anthony's Lament</option>
+      </select>
     </section>
 
     <p class="hint">Drag to pan · Scroll to zoom · Press <kbd>R</kbd> to reset</p>
