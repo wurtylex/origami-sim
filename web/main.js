@@ -20,6 +20,7 @@ const el = {
   uploadLabel:   document.querySelector('label.upload'),
   errorNote:     document.getElementById('error-note'),
   successNote:   document.getElementById('success-note'),
+  leanNote:      document.getElementById('lean-note'),
   viewToggle:    document.getElementById('view-toggle'),
   toggleButtons: document.querySelectorAll('#view-toggle button'),
   sliderRow:     document.getElementById('fold-slider-row'),
@@ -29,6 +30,7 @@ const el = {
   editModePanel: document.getElementById('edit-mode-panel'),
   typeButtons:   document.querySelectorAll('.type-btn'),
   exportBtn:     document.getElementById('export'),
+  runLeanBtn:    document.getElementById('run-lean'),
   themeSelect:   document.getElementById('theme-select'),
   stat: {
     title:    document.getElementById('stat-title'),
@@ -104,6 +106,8 @@ let foldT = 1.0;
 let renderer3d = null;  // lazily created
 let isEditMode = false;
 let selectedCreaseType = 'U';  // 'M' | 'V' | 'B' | 'F' | 'U'
+let lastExportFilename = null;
+let leanPollId = null;
 
 // -----------------------------------------------------------------------------
 // Render dispatch
@@ -294,12 +298,54 @@ async function tryServerExport(foldData, title) {
   }
 }
 
+async function startLeanJob(filename) {
+  const res = await fetch('./run-lean', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  const payload = await res.json();
+  return payload.job_id;
+}
+
+async function pollLeanStatus(jobId) {
+  const res = await fetch(`./run-lean/status?job_id=${encodeURIComponent(jobId)}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+function showLeanStatus(msg) {
+  el.leanNote.textContent = msg;
+  el.leanNote.hidden = false;
+}
+
+function clearLeanStatus() {
+  el.leanNote.textContent = '';
+  el.leanNote.hidden = true;
+}
+
+function stopLeanPolling() {
+  if (leanPollId) {
+    clearInterval(leanPollId);
+    leanPollId = null;
+  }
+}
+
 function setupExport() {
   el.exportBtn.addEventListener('click', async () => {
     if (!doc) {
       showError('No pattern loaded. Please upload a FOLD file first.');
       return;
     }
+
+    clearLeanStatus();
 
     try {
       const foldData = await svgToFold(el.svg);
@@ -314,6 +360,7 @@ function setupExport() {
 
       const savedToServer = await tryServerExport(foldData, title);
       if (savedToServer.ok) {
+        lastExportFilename = savedToServer.filename || `${title.replace(/\s+/g, '_')}.fold`;
         showSuccess(`Saved to ./data/${savedToServer.filename || 'pattern.fold'}`);
         clearError();
         return;
@@ -335,6 +382,74 @@ function setupExport() {
       showSuccess('File downloaded.');
     } catch (err) {
       showError(`Could not export pattern: ${err.message || err}`);
+    }
+  });
+}
+
+function setupLeanRun() {
+  el.runLeanBtn.addEventListener('click', async () => {
+    if (!doc) {
+      showError('No pattern loaded. Please upload a FOLD file first.');
+      return;
+    }
+
+    stopLeanPolling();
+    clearSuccess();
+    clearError();
+    showLeanStatus('Saving FOLD to server...');
+    el.runLeanBtn.disabled = true;
+
+    try {
+      const foldData = await svgToFold(el.svg);
+      if (!foldData) {
+        throw new Error('Could not export pattern.');
+      }
+
+      const title = doc.renderJson ? JSON.parse(doc.renderJson('cp')).title || 'pattern' : 'pattern';
+      foldData.title = title;
+
+      const savedToServer = await tryServerExport(foldData, title);
+      if (!savedToServer.ok) {
+        throw new Error('Server export failed. Is the Python server running?');
+      }
+      lastExportFilename = savedToServer.filename || `${title.replace(/\s+/g, '_')}.fold`;
+
+      showLeanStatus('Starting Lean check...');
+      const jobId = await startLeanJob(lastExportFilename);
+
+      leanPollId = setInterval(async () => {
+        try {
+          const status = await pollLeanStatus(jobId);
+          if (status.status === 'done') {
+            stopLeanPolling();
+            el.runLeanBtn.disabled = false;
+            if (status.success) {
+              showLeanStatus('Lean compile succeeded.');
+              showSuccess('Lean check passed.');
+            } else {
+              showLeanStatus('Lean compile failed.');
+              showError(status.error || 'Lean check failed.');
+            }
+            return;
+          }
+
+          if (status.step === 'convert') {
+            showLeanStatus('Converting FOLD to Lean...');
+          } else if (status.step === 'compile') {
+            showLeanStatus('Compiling Lean...');
+          } else {
+            showLeanStatus('Queued...');
+          }
+        } catch (err) {
+          stopLeanPolling();
+          el.runLeanBtn.disabled = false;
+          showError(`Lean status failed: ${err.message || err}`);
+        }
+      }, 1000);
+    } catch (err) {
+      el.runLeanBtn.disabled = false;
+      showError(err.message || err);
+      clearLeanStatus();
     }
   });
 }
@@ -406,6 +521,7 @@ async function main() {
   setupViewToggle();
   setupSlider();
   setupExport();
+  setupLeanRun();
   render();
   console.log('About to setup edit mode');
   setupEditMode();

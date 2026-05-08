@@ -430,6 +430,16 @@ button.ghost.active-mode {
   word-break: break-word;
 }
 
+.status-note {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--ink-soft);
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid var(--rule);
+  margin-top: 0.5rem;
+  word-break: break-word;
+}
+
 /* =============================================================================
    Paper field (the canvas)
    ============================================================================= */
