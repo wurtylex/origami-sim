@@ -420,6 +420,16 @@ button.ghost.active-mode {
   word-break: break-word;
 }
 
+.success-note {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: #2f7a4a;
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid #2f7a4a;
+  margin-top: 0.5rem;
+  word-break: break-word;
+}
+
 /* =============================================================================
    Paper field (the canvas)
    ============================================================================= */

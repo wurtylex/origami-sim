@@ -303,6 +303,14 @@ export function resetView2d(svg) {
 
 // Convert screen coordinates to SVG viewBox coordinates
 function screenToSvg(svg, clientX, clientY) {
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return null;
+
+  if (typeof DOMPoint !== 'undefined') {
+    const pt = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+    return { x: pt.x, y: pt.y };
+  }
+
   const rect = svg.getBoundingClientRect();
   const s = state.get(svg);
   if (!s) return null;
