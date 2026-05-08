@@ -19,6 +19,7 @@ const el = {
   fileInput:     document.getElementById('file-input'),
   uploadLabel:   document.querySelector('label.upload'),
   errorNote:     document.getElementById('error-note'),
+  successNote:   document.getElementById('success-note'),
   viewToggle:    document.getElementById('view-toggle'),
   toggleButtons: document.querySelectorAll('#view-toggle button'),
   sliderRow:     document.getElementById('fold-slider-row'),
@@ -271,6 +272,28 @@ function setupFileInput() {
 }
 
 
+async function tryServerExport(foldData, title) {
+  try {
+    const res = await fetch('./export-fold', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, fold: foldData }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    const payload = await res.json().catch(() => null);
+    if (payload?.filename) {
+      console.log(`Saved ${payload.filename}`);
+    }
+    return { ok: true, filename: payload?.filename };
+  } catch (err) {
+    console.warn('Server export failed, falling back to download.', err);
+    return { ok: false };
+  }
+}
+
 function setupExport() {
   el.exportBtn.addEventListener('click', async () => {
     if (!doc) {
@@ -289,6 +312,13 @@ function setupExport() {
       const title = doc.renderJson ? JSON.parse(doc.renderJson('cp')).title || 'pattern' : 'pattern';
       foldData.title = title;
 
+      const savedToServer = await tryServerExport(foldData, title);
+      if (savedToServer.ok) {
+        showSuccess(`Saved to ./data/${savedToServer.filename || 'pattern.fold'}`);
+        clearError();
+        return;
+      }
+
       const json = JSON.stringify(foldData, null, 2);
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -302,6 +332,7 @@ function setupExport() {
       URL.revokeObjectURL(url);
 
       clearError();
+      showSuccess('File downloaded.');
     } catch (err) {
       showError(`Could not export pattern: ${err.message || err}`);
     }
@@ -319,13 +350,24 @@ async function loadFile(file) {
 }
 
 function showError(msg) {
+  clearSuccess();
   el.errorNote.textContent = msg;
   el.errorNote.hidden = false;
+}
+
+function showSuccess(msg) {
+  el.successNote.textContent = msg;
+  el.successNote.hidden = false;
 }
 
 function clearError() {
   el.errorNote.textContent = '';
   el.errorNote.hidden = true;
+}
+
+function clearSuccess() {
+  el.successNote.textContent = '';
+  el.successNote.hidden = true;
 }
 
 function enablePatternEditing() {
