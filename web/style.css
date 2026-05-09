@@ -3,15 +3,15 @@
    ============================================================================= */
 
 :root {
-  --paper:        #012a4a;
-  --paper-raised: #013a63;
+  --paper:        #F2EDE1;
+  --paper-raised: #FAF6EC;
   --paper-shadow: rgba(24, 20, 15, 0.12);
 
-  --ink:          #a9d6e5;
-  --ink-soft:     #89c2d9;
-  --pencil:       #a9d6e5;
-  --pencil-light: #89c2d9;
-  --rule:         #61a5c2;
+  --ink:          #18140F;
+  --ink-soft:     #4A4540;
+  --pencil:       #8A8075;
+  --pencil-light: #C4BDB0;
+  --rule:         #2C2620;
 
   --mountain:     #B8352C;
   --valley:       #2C4B8C;

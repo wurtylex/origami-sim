@@ -283,6 +283,13 @@ function setupThemeSelector() {
       document.documentElement.style.setProperty(property, value);
     }
   });
+
+  const initialTheme = themes[el.themeSelect.value];
+  if (initialTheme) {
+    for (const [property, value] of Object.entries(initialTheme)) {
+      document.documentElement.style.setProperty(property, value);
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------
