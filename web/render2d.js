@@ -25,6 +25,7 @@ let isDrawing = false;
 let startPos = null;
 let currentLine = null;
 let selectedCreaseType = 'U';
+let pointMode = false;
 
 export function setSelectedCreaseType(type) {
   selectedCreaseType = type;
@@ -87,6 +88,13 @@ export function render2d(doc, mode, svg) {
   for (const edge of data.edges) {
     vertexSet.add(`${edge.x1},${edge.y1}`);
     vertexSet.add(`${edge.x2},${edge.y2}`);
+  }
+  if (Array.isArray(data.vertices_coords)) {
+    for (const v of data.vertices_coords) {
+      if (Array.isArray(v) && v.length >= 2) {
+        vertexSet.add(`${v[0]},${v[1]}`);
+      }
+    }
   }
   const dotRadius = 0.6 * strokeScale;
   for (const key of vertexSet) {
@@ -155,6 +163,15 @@ export async function svgToFold(svg) {
       }
     }
     edgeAssignment.push(assignment);
+  });
+
+  const freePoints = world.querySelectorAll('circle[data-point="1"]');
+  freePoints.forEach(circle => {
+    const x = parseFloat(circle.getAttribute('cx'));
+    const y = parseFloat(circle.getAttribute('cy'));
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      getVertexIndex(x, y);
+    }
   });
 
   // 3. Compute edges_foldAngle based on assignment
@@ -422,12 +439,54 @@ export function disableDrawingMode(svg) {
   }
 }
 
+export function enablePointMode(svg) {
+  pointMode = true;
+  if (svg._pointModeHandler) return;
+
+  const handlePoint = (e) => {
+    if (!pointMode || !e.isPrimary) return;
+    const pos = screenToSvg(svg, e.clientX, e.clientY);
+    if (!pos) return;
+
+    const worldPos = svgToWorld(pos.x, pos.y);
+    const world = svg.querySelector('g');
+    if (!world) return;
+
+    const s = state.get(svg);
+    const radius = (s?.strokeScale || 1) * 1.1;
+    const dot = document.createElementNS(SVG_NS, 'circle');
+    dot.setAttribute('cx', worldPos.x);
+    dot.setAttribute('cy', worldPos.y);
+    dot.setAttribute('r', radius);
+    dot.setAttribute('data-point', '1');
+    dot.setAttribute('class', 'free-point');
+    world.appendChild(dot);
+
+    e.preventDefault();
+    if (typeof e.stopImmediatePropagation === 'function') {
+      e.stopImmediatePropagation();
+    }
+    e.stopPropagation();
+  };
+
+  svg.addEventListener('pointerdown', handlePoint, true);
+  svg._pointModeHandler = handlePoint;
+}
+
+export function disablePointMode(svg) {
+  pointMode = false;
+  if (svg._pointModeHandler) {
+    svg.removeEventListener('pointerdown', svg._pointModeHandler, true);
+    delete svg._pointModeHandler;
+  }
+}
+
 export function attachPanZoom2d(svg) {
   let dragging = false;
   let last = { x: 0, y: 0 };
 
   const handlePointerDown = (e) => {
-    if (drawingMode) return;
+    if (drawingMode || pointMode) return;
     dragging = true;
     last = { x: e.clientX, y: e.clientY };
     svg.setPointerCapture(e.pointerId);
@@ -452,7 +511,7 @@ export function attachPanZoom2d(svg) {
   };
 
   const handleWheel = (e) => {
-    if (drawingMode) return;
+    if (drawingMode || pointMode) return;
     const s = state.get(svg);
     if (!s) return;
     e.preventDefault();
@@ -481,3 +540,4 @@ export function attachPanZoom2d(svg) {
 function applyViewBox(svg, vb) {
   svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
 }
+

@@ -6,7 +6,7 @@
 // have an `update` (or `render2d`) function.
 
 import init, { FoldDocument } from './pkg/origami.js';
-import { render2d, attachPanZoom2d, enableDrawingMode, disableDrawingMode, svgToFold, setSelectedCreaseType } from './render2d.js';
+import { render2d, attachPanZoom2d, enableDrawingMode, disableDrawingMode, enablePointMode, disablePointMode, svgToFold, setSelectedCreaseType } from './render2d.js';
 import { create3dRenderer } from './render3d.js';
 
 // -----------------------------------------------------------------------------
@@ -29,6 +29,8 @@ const el = {
   editBtn:       document.getElementById('edit-crease-mode'),
   editModePanel: document.getElementById('edit-mode-panel'),
   typeButtons:   document.querySelectorAll('.type-btn'),
+  resetUnitBtn:  document.getElementById('reset-unit'),
+  addPointBtn:   document.getElementById('add-point'),
   exportBtn:     document.getElementById('export'),
   runLeanBtn:    document.getElementById('run-lean'),
   themeSelect:   document.getElementById('theme-select'),
@@ -106,6 +108,7 @@ let foldT = 1.0;
 let renderer3d = null;  // lazily created
 let isEditMode = false;
 let selectedCreaseType = 'U';  // 'M' | 'V' | 'B' | 'F' | 'U'
+let isPointMode = false;
 let lastExportFilename = null;
 let leanPollId = null;
 
@@ -205,6 +208,36 @@ function setupEditMode() {
     return;
   }
 
+  if (el.resetUnitBtn) {
+    el.resetUnitBtn.addEventListener('click', async () => {
+      stopLeanPolling();
+      clearSuccess();
+      clearError();
+      clearLeanStatus();
+      try {
+        await loadDefaultSquare();
+        if (isEditMode) {
+          enablePatternEditing();
+        }
+        showSuccess('Reset to unit square.');
+      } catch (err) {
+        showError(`Reset failed: ${err.message || err}`);
+      }
+    });
+  }
+
+  if (el.addPointBtn) {
+    el.addPointBtn.addEventListener('click', () => {
+      isPointMode = !isPointMode;
+      el.addPointBtn.classList.toggle('active-mode', isPointMode);
+      if (isPointMode) {
+        enablePointMode(el.svg);
+      } else {
+        disablePointMode(el.svg);
+      }
+    });
+  }
+
   // Setup type button handlers
   el.typeButtons.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -229,6 +262,11 @@ function setupEditMode() {
     if (isEditMode) {
       enablePatternEditing();
     } else {
+      isPointMode = false;
+      if (el.addPointBtn) {
+        el.addPointBtn.classList.remove('active-mode');
+      }
+      disablePointMode(el.svg);
       await disablePatternEditing();
       // Logic to update your .FOLD data structure here
     }
@@ -298,18 +336,18 @@ async function tryServerExport(foldData, title) {
   }
 }
 
-async function startLeanJob(filename) {
+async function startLeanJob(payload) {
   const res = await fetch('./run-lean', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
   }
-  const payload = await res.json();
-  return payload.job_id;
+  const data = await res.json();
+  return { jobId: data.job_id, filename: data.filename };
 }
 
 async function pollLeanStatus(jobId) {
@@ -408,14 +446,9 @@ function setupLeanRun() {
       const title = doc.renderJson ? JSON.parse(doc.renderJson('cp')).title || 'pattern' : 'pattern';
       foldData.title = title;
 
-      const savedToServer = await tryServerExport(foldData, title);
-      if (!savedToServer.ok) {
-        throw new Error('Server export failed. Is the Python server running?');
-      }
-      lastExportFilename = savedToServer.filename || `${title.replace(/\s+/g, '_')}.fold`;
-
       showLeanStatus('Starting Lean check...');
-      const jobId = await startLeanJob(lastExportFilename);
+      const { jobId, filename } = await startLeanJob({ title, fold: foldData });
+      lastExportFilename = filename || `${title.replace(/\s+/g, '_')}.fold`;
 
       leanPollId = setInterval(async () => {
         try {
@@ -462,6 +495,16 @@ async function loadFile(file) {
   } catch (err) {
     showError(`Could not load file: ${err.message || err}`);
   }
+}
+
+async function loadDefaultSquare() {
+  const response = await fetch('./square.fold');
+  if (!response.ok) {
+    throw new Error('Could not load square.fold');
+  }
+  const blob = await response.blob();
+  const initialFile = new File([blob], 'square.fold');
+  await loadFile(initialFile);
 }
 
 function showError(msg) {
@@ -529,13 +572,7 @@ async function main() {
 
   // Set up default file
   try {
-    const response = await fetch('./square.fold');
-    if (response.ok) {
-      const blob = await response.blob();
-      // We create a File object so it's compatible with your loadFile(file) helper
-      const initialFile = new File([blob], "square.fold");
-      await loadFile(initialFile);
-    }
+    await loadDefaultSquare();
   } catch (err) {
     console.warn("Failed to preload default pattern:", err);
   }

@@ -193,6 +193,16 @@ button.ghost.active-mode {
   border: 1px solid var(--pencil-light);
 }
 
+.edit-actions {
+  margin-top: 0.6rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.edit-actions .ghost {
+  padding-left: 0.5rem;
+}
+
 .edit-subtitle {
   font-family: var(--font-mono);
   font-size: 0.62rem;
@@ -483,6 +493,12 @@ button.ghost.active-mode {
   text-transform: none;
   letter-spacing: 0.04em;
   color: var(--ink-soft);
+}
+
+/* Free points visual treatment */
+.free-point {
+  fill: var(--ink);
+  opacity: 0.85;
 }
 
 /* =============================================================================
