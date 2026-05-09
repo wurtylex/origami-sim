@@ -119,14 +119,24 @@ export async function svgToFold(svg) {
   const edges = [];
   const edgeAssignment = [];
 
+  const snapEps = 1e-3;
+  const snap01 = (v) => {
+    if (Math.abs(v) <= snapEps) return 0;
+    if (Math.abs(v - 1) <= snapEps) return 1;
+    return v;
+  };
+
   // Helper to find or add a vertex and return its index
   const getVertexIndex = (x, y) => {
     // Rounding helps avoid floating point precision issues from SVG transforms
     const precision = 6;
-    const rx = parseFloat(x.toFixed(precision));
-    const ry = parseFloat(y.toFixed(precision));
+    const rx = parseFloat(snap01(x).toFixed(precision));
+    const ry = parseFloat(snap01(y).toFixed(precision));
 
     let index = vertices.findIndex(v => v[0] === rx && v[1] === ry);
+    if (index === -1) {
+      index = vertices.findIndex(v => Math.abs(v[0] - rx) <= snapEps && Math.abs(v[1] - ry) <= snapEps);
+    }
     if (index === -1) {
       vertices.push([rx, ry]);
       index = vertices.length - 1;
@@ -186,6 +196,8 @@ export async function svgToFold(svg) {
     }
   });
 
+  const hasMarkedCreases = edgeAssignment.some(a => a === 'M' || a === 'V');
+
   // 4. Try to compute faces using Rabbit Ear
   let earGraph = null;
   try {
@@ -226,10 +238,10 @@ export async function svgToFold(svg) {
   // This ensures assignments are preserved even when Rabbit Ear re-parses the SVG
   const ourAssignmentMap = new Map();
   lines.forEach((line, idx) => {
-    const x1 = parseFloat(line.getAttribute('x1'));
-    const y1 = parseFloat(line.getAttribute('y1'));
-    const x2 = parseFloat(line.getAttribute('x2'));
-    const y2 = parseFloat(line.getAttribute('y2'));
+    const x1 = snap01(parseFloat(line.getAttribute('x1')));
+    const y1 = snap01(parseFloat(line.getAttribute('y1')));
+    const x2 = snap01(parseFloat(line.getAttribute('x2')));
+    const y2 = snap01(parseFloat(line.getAttribute('y2')));
 
     // Use our stored data-type if available, otherwise use the computed assignment
     let assignment = line.getAttribute('data-type') || edgeAssignment[idx] || 'U';
@@ -242,14 +254,77 @@ export async function svgToFold(svg) {
 
   if (earGraph && earGraph.vertices_coords && earGraph.edges_vertices) {
     console.log('Using Rabbit Ear graph as base');
-    // Create assignment mapping: overlay our custom assignments onto Rabbit Ear's edges
+    // Create assignment mapping: overlay our custom edge assignments onto Rabbit Ear's edges
     const earAssignment = (earGraph.edges_assignment || []).slice(); // copy
+
+    const normalizeEarVertex = ([x, y]) => [snap01(x), snap01(-y)];
+    const snappedVertices = earGraph.vertices_coords.map(normalizeEarVertex);
+
+    const segments = [];
+    lines.forEach((line, idx) => {
+      const x1 = snap01(parseFloat(line.getAttribute('x1')));
+      const y1 = snap01(parseFloat(line.getAttribute('y1')));
+      const x2 = snap01(parseFloat(line.getAttribute('x2')));
+      const y2 = snap01(parseFloat(line.getAttribute('y2')));
+      const assignment = line.getAttribute('data-type') || edgeAssignment[idx] || 'U';
+      segments.push({ x1, y1, x2, y2, assignment });
+    });
+
+    const dist2 = (ax, ay, bx, by) => {
+      const dx = ax - bx;
+      const dy = ay - by;
+      return dx * dx + dy * dy;
+    };
+
+    const pointToSegmentDist2 = (px, py, ax, ay, bx, by) => {
+      const abx = bx - ax;
+      const aby = by - ay;
+      const apx = px - ax;
+      const apy = py - ay;
+      const abLen2 = abx * abx + aby * aby;
+      if (abLen2 === 0) return dist2(px, py, ax, ay);
+      let t = (apx * abx + apy * aby) / abLen2;
+      t = Math.max(0, Math.min(1, t));
+      const cx = ax + t * abx;
+      const cy = ay + t * aby;
+      return dist2(px, py, cx, cy);
+    };
+
+    const assignFromSegments = (x1, y1, x2, y2) => {
+      const tol2 = 1e-4;
+      let bestAny = null;
+      let bestAnyDist = Infinity;
+      let bestMarked = null;
+      let bestMarkedDist = Infinity;
+
+      for (const seg of segments) {
+        const d1 = pointToSegmentDist2(x1, y1, seg.x1, seg.y1, seg.x2, seg.y2);
+        const d2 = pointToSegmentDist2(x2, y2, seg.x1, seg.y1, seg.x2, seg.y2);
+        const d = Math.max(d1, d2);
+        if (d < bestAnyDist) {
+          bestAnyDist = d;
+          bestAny = seg.assignment;
+        }
+        if ((seg.assignment === 'M' || seg.assignment === 'V') && d < bestMarkedDist) {
+          bestMarkedDist = d;
+          bestMarked = seg.assignment;
+        }
+      }
+
+      if (bestMarked !== null && bestMarkedDist <= tol2) {
+        return bestMarked;
+      }
+      if (bestAny !== null && bestAnyDist <= tol2) {
+        return bestAny;
+      }
+      return null;
+    };
 
     // For each Rabbit Ear edge, try to find our custom assignment
     earGraph.edges_vertices.forEach((edge, eIdx) => {
       const [ev1, ev2] = edge;
-      const [ex1, ey1] = earGraph.vertices_coords[ev1];
-      const [ex2, ey2] = earGraph.vertices_coords[ev2];
+      const [ex1, ey1] = snappedVertices[ev1];
+      const [ex2, ey2] = snappedVertices[ev2];
 
       // Create a canonical key matching how we stored them
       const key = `${Math.min(ex1, ex2).toFixed(6)},${Math.min(ey1, ey2).toFixed(6)}-${Math.max(ex1, ex2).toFixed(6)},${Math.max(ey1, ey2).toFixed(6)}`;
@@ -258,29 +333,57 @@ export async function svgToFold(svg) {
         const assignment = ourAssignmentMap.get(key);
         earAssignment[eIdx] = assignment;
         console.log(`Applied custom assignment to Rabbit Ear edge ${eIdx}: ${assignment}`);
+      } else {
+        const assignment = assignFromSegments(ex1, ey1, ex2, ey2);
+        if (assignment) {
+          earAssignment[eIdx] = assignment;
+        }
       }
     });
 
-    fold = {
-      file_spec: 1.1,
-      file_creator: "Crease Pattern Inspector",
-      file_classes: ["singleModel"],
-      frame_classes: ["creasePattern"],
-      vertices_coords: earGraph.vertices_coords,
-      edges_vertices: earGraph.edges_vertices,
-      edges_assignment: earAssignment,
-      edges_foldAngle: earGraph.edges_foldAngle || earAssignment.map(a => {
-        switch (a) {
-          case 'M': return 180;
-          case 'V': return -180;
-          default: return 0;
-        }
-      }),
-    };
+    const earHasMarked = earAssignment.some(a => a === 'M' || a === 'V');
+    if (hasMarkedCreases && !earHasMarked) {
+      const verticesEdges = vertices.map(() => []);
+      edges.forEach((edge, idx) => {
+        const [v1, v2] = edge;
+        verticesEdges[v1].push(idx);
+        verticesEdges[v2].push(idx);
+      });
 
-    if (earGraph.vertices_edges) fold.vertices_edges = earGraph.vertices_edges;
-    if (earGraph.faces_vertices) fold.faces_vertices = earGraph.faces_vertices;
-    if (earGraph.faces_edges) fold.faces_edges = earGraph.faces_edges;
+      fold = {
+        file_spec: 1.1,
+        file_creator: "Crease Pattern Inspector",
+        file_classes: ["singleModel"],
+        frame_classes: ["creasePattern"],
+        vertices_coords: vertices,
+        edges_vertices: edges,
+        edges_assignment: edgeAssignment,
+        edges_foldAngle: foldAngles,
+        vertices_edges: verticesEdges,
+      };
+      if (earGraph.faces_vertices) fold.faces_vertices = earGraph.faces_vertices;
+    } else {
+      fold = {
+        file_spec: 1.1,
+        file_creator: "Crease Pattern Inspector",
+        file_classes: ["singleModel"],
+        frame_classes: ["creasePattern"],
+        vertices_coords: snappedVertices,
+        edges_vertices: earGraph.edges_vertices,
+        edges_assignment: earAssignment,
+        edges_foldAngle: earGraph.edges_foldAngle || earAssignment.map(a => {
+          switch (a) {
+            case 'M': return 180;
+            case 'V': return -180;
+            default: return 0;
+          }
+        }),
+      };
+
+      if (earGraph.vertices_edges) fold.vertices_edges = earGraph.vertices_edges;
+      if (earGraph.faces_vertices) fold.faces_vertices = earGraph.faces_vertices;
+      if (earGraph.faces_edges) fold.faces_edges = earGraph.faces_edges;
+    }
 
   } else {
     // 6. Fallback: construct FOLD without face topology
