@@ -4,10 +4,48 @@
 // decides which one is active, hands them the FoldDocument, and updates the
 // stats panel. It doesn't know how either renderer draws — only that they
 // have an `update` (or `render2d`) function.
+//
+// The crease pattern loaded here (default unit square, or an uploaded .fold
+// file) is purely the paper substrate the Huzita axiom panel picks points
+// and creases from — there is no in-app crease drawing or FOLD verification;
+// that lives entirely in the Python server / API / Lean pipeline described
+// in project description.txt.
+//
+// Stacking model: at the start, only the paper's corners and border edges
+// are available to pick from. Each stacked axiom computes the real fold line
+// (geometry.js) it produces, which becomes a newly available line, and every
+// point where that fold crosses an existing line becomes a newly available
+// point — this is what "stacking axioms on top of each other" means: later
+// folds are built from geometry earlier folds introduced.
 
 import init, { FoldDocument } from './pkg/origami.js';
-import { render2d, attachPanZoom2d, enableDrawingMode, disableDrawingMode, enablePointMode, disablePointMode, svgToFold, setSelectedCreaseType } from './render2d.js';
+import { render2d, attachPanZoom2d, enableEntityPickMode, disableEntityPickMode, drawAxiomMarkers } from './render2d.js';
 import { create3dRenderer } from './render3d.js';
+import * as Geo from './geometry.js';
+
+// -----------------------------------------------------------------------------
+// Huzita axiom definitions — mirrors OrigamiAPI.AXIOM_REQUIREMENTS in origami_api.py
+// -----------------------------------------------------------------------------
+
+const AXIOMS = {
+  1: { desc: 'Fold through two points p1 and p2.', slots: [{ name: 'p1', kind: 'point' }, { name: 'p2', kind: 'point' }] },
+  2: { desc: 'Fold that places point p1 onto point p2.', slots: [{ name: 'p1', kind: 'point' }, { name: 'p2', kind: 'point' }] },
+  3: { desc: 'Fold that places line l1 onto line l2.', slots: [{ name: 'l1', kind: 'line' }, { name: 'l2', kind: 'line' }] },
+  4: { desc: 'Fold through p1, perpendicular to l1.', slots: [{ name: 'p1', kind: 'point' }, { name: 'l1', kind: 'line' }] },
+  5: { desc: 'Fold that places p1 onto l1 and passes through p2.', slots: [{ name: 'p1', kind: 'point' }, { name: 'p2', kind: 'point' }, { name: 'l1', kind: 'line' }] },
+  6: { desc: 'Fold that places p1 onto l1 and p2 onto l2.', slots: [{ name: 'p1', kind: 'point' }, { name: 'p2', kind: 'point' }, { name: 'l1', kind: 'line' }, { name: 'l2', kind: 'line' }] },
+  7: { desc: 'Fold that places p1 onto l1, perpendicular to l2 (l1, l2 not parallel).', slots: [{ name: 'p1', kind: 'point' }, { name: 'l1', kind: 'line' }, { name: 'l2', kind: 'line' }] },
+};
+
+const AXIOM_SOLVER = {
+  1: (e) => Geo.axiom1(e.p1, e.p2),
+  2: (e) => Geo.axiom2(e.p1, e.p2),
+  3: (e) => Geo.axiom3(e.l1, e.l2),
+  4: (e) => Geo.axiom4(e.p1, e.l1),
+  5: (e) => Geo.axiom5(e.p1, e.p2, e.l1),
+  6: (e) => Geo.axiom6(e.p1, e.p2, e.l1, e.l2),
+  7: (e) => Geo.axiom7(e.p1, e.l1, e.l2),
+};
 
 // -----------------------------------------------------------------------------
 // DOM references
@@ -20,20 +58,24 @@ const el = {
   uploadLabel:   document.querySelector('label.upload'),
   errorNote:     document.getElementById('error-note'),
   successNote:   document.getElementById('success-note'),
-  leanNote:      document.getElementById('lean-note'),
   viewToggle:    document.getElementById('view-toggle'),
   toggleButtons: document.querySelectorAll('#view-toggle button'),
   sliderRow:     document.getElementById('fold-slider-row'),
   slider:        document.getElementById('fold-slider'),
   sliderValue:   document.getElementById('fold-value'),
-  editBtn:       document.getElementById('edit-crease-mode'),
-  editModePanel: document.getElementById('edit-mode-panel'),
-  typeButtons:   document.querySelectorAll('.type-btn'),
-  resetUnitBtn:  document.getElementById('reset-unit'),
-  addPointBtn:   document.getElementById('add-point'),
-  exportBtn:     document.getElementById('export'),
-  runLeanBtn:    document.getElementById('run-lean'),
   themeSelect:   document.getElementById('theme-select'),
+  axiomButtons:  document.querySelectorAll('.axiom-btn'),
+  axiomDesc:     document.getElementById('axiom-desc'),
+  axiomSlots:    document.getElementById('axiom-slots'),
+  addAxiomBtn:   document.getElementById('add-axiom-btn'),
+  axiomNote:     document.getElementById('axiom-note'),
+  stackList:     document.getElementById('axiom-stack-list'),
+  undoAxiomBtn:  document.getElementById('undo-axiom-btn'),
+  clearStackBtn: document.getElementById('clear-stack-btn'),
+  buildLeanBtn:  document.getElementById('build-lean-btn'),
+  buildNote:     document.getElementById('build-note'),
+  leanPreviewWrap: document.getElementById('lean-preview-wrap'),
+  leanPreview:   document.getElementById('lean-preview'),
   stat: {
     title:    document.getElementById('stat-title'),
     vertices: document.getElementById('stat-vertices'),
@@ -60,7 +102,6 @@ const themes = {
   bewd: {
     '--paper':        '#012a4a',
     '--paper-raised': '#013a63',
-    // '--paper-shadow': rgba(24, 20, 15, 0.12),
     '--ink':          '#a9d6e5',
     '--ink-soft':     '#89c2d9',
     '--pencil':       '#a9d6e5',
@@ -73,7 +114,6 @@ const themes = {
   lf: {
     '--paper':        '#33415c',
     '--paper-raised': '#5c677d',
-    // '--paper-shadow': rgba(24, 20, 15, 0.12),
     '--ink':          '#C4BDB0',
     '--ink-soft':     '#C4BDB0',
     '--pencil':       '#979dac',
@@ -86,7 +126,6 @@ const themes = {
   al: {
     '--paper':        '#F2EDE1',
     '--paper-raised': '#FAF6EC',
-    // '--paper-shadow': rgba(24, 20, 15, 0.12),
     '--ink':          '#18140F',
     '--ink-soft':     '#4A4540',
     '--pencil':       '#8A8075',
@@ -106,11 +145,25 @@ let doc = null;
 let mode = 'cp';        // 'cp' | '3d'
 let foldT = 1.0;
 let renderer3d = null;  // lazily created
-let isEditMode = false;
-let selectedCreaseType = 'U';  // 'M' | 'V' | 'B' | 'F' | 'U'
-let isPointMode = false;
-let lastExportFilename = null;
-let leanPollId = null;
+
+// Huzita axiom stacking state
+let selectedAxiomType = null;
+let axiomSlotValues = {};   // slot name -> entity | null, for the axiom being built
+let pickingSlotName = null;
+let candidateSolutions = []; // computed fold lines for the in-progress axiom (0, 1 or many)
+let chosenSolution = null;   // the candidate selected to commit on "Add to stack"
+let stackEntities = {};     // Lean identifier -> entity, from the server
+let stackAxioms = [];       // [{index, type, params}], from the server
+let buildPollId = null;
+
+// Client-side construction geometry: what's actually available to pick from.
+// Seeded from the paper's corners/border edges, then grown as folds stack.
+let paperBounds = null;      // [minX, minY, maxX, maxY] of the loaded paper
+let availablePoints = [];    // {kind:'point', id, x, y}
+let availableLines = [];     // {kind:'line', id, a, b, c, x1, y1, x2, y2}
+let pointCounter = 0;
+let lineCounter = 0;
+let geometryHistory = [];    // one entry per stacked axiom: {lineId, addedPointIds}
 
 // -----------------------------------------------------------------------------
 // Render dispatch
@@ -126,6 +179,7 @@ function render() {
     try {
       const data = render2d(doc, 'cp', el.svg);
       updateStats(data);
+      refreshAxiomMarkers();
     } catch (err) {
       showError(String(err));
     }
@@ -201,84 +255,9 @@ function setupSlider() {
   });
 }
 
-function setupEditMode() {
-  console.log('Setting up edit mode. Button:', el.editBtn);
-  if (!el.editBtn) {
-    console.error('Edit button not found!');
-    return;
-  }
-
-  if (el.resetUnitBtn) {
-    el.resetUnitBtn.addEventListener('click', async () => {
-      stopLeanPolling();
-      clearSuccess();
-      clearError();
-      clearLeanStatus();
-      try {
-        await loadDefaultSquare();
-        if (isEditMode) {
-          enablePatternEditing();
-        }
-        showSuccess('Reset to unit square.');
-      } catch (err) {
-        showError(`Reset failed: ${err.message || err}`);
-      }
-    });
-  }
-
-  if (el.addPointBtn) {
-    el.addPointBtn.addEventListener('click', () => {
-      isPointMode = !isPointMode;
-      el.addPointBtn.classList.toggle('active-mode', isPointMode);
-      if (isPointMode) {
-        enablePointMode(el.svg);
-      } else {
-        disablePointMode(el.svg);
-      }
-    });
-  }
-
-  // Setup type button handlers
-  el.typeButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      selectedCreaseType = btn.dataset.type;
-      setSelectedCreaseType(selectedCreaseType);
-      el.typeButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
-  });
-
-  el.editBtn.addEventListener('click', async () => {
-    console.log('Edit button clicked! isEditMode was:', isEditMode);
-    isEditMode = !isEditMode;
-
-    // Visual feedback for the button
-    el.editBtn.textContent = isEditMode ? '[Save Changes]' : '[Edit Pattern]';
-    el.editBtn.classList.toggle('active-mode', isEditMode);
-
-    // Show/hide edit mode panel
-    el.editModePanel.hidden = !isEditMode;
-
-    if (isEditMode) {
-      enablePatternEditing();
-    } else {
-      isPointMode = false;
-      if (el.addPointBtn) {
-        el.addPointBtn.classList.remove('active-mode');
-      }
-      disablePointMode(el.svg);
-      await disablePatternEditing();
-      // Logic to update your .FOLD data structure here
-    }
-  });
-}
-
-
 function setupThemeSelector() {
   el.themeSelect.addEventListener('change', (e) => {
     const selectedTheme = themes[e.target.value];
-    console.log('picked theme' + e.target.value)
-    // Loop through the selected theme and update CSS variables
     for (const [property, value] of Object.entries(selectedTheme)) {
       document.documentElement.style.setProperty(property, value);
     }
@@ -293,13 +272,14 @@ function setupThemeSelector() {
 }
 
 // -----------------------------------------------------------------------------
-// File I/O
+// File I/O — loading a paper (default unit square, or an uploaded .fold) to
+// pick Huzita axiom entities from. No editing or export happens here.
 // -----------------------------------------------------------------------------
 
 function setupFileInput() {
   el.fileInput.addEventListener('change', () => {
     const file = el.fileInput.files?.[0];
-    if (file) loadFile(file);
+    if (file) loadFile(file, { resetStack: true });
   });
 
   ['dragenter', 'dragover'].forEach(evt => {
@@ -316,189 +296,22 @@ function setupFileInput() {
   });
   el.uploadLabel.addEventListener('drop', e => {
     const file = e.dataTransfer?.files?.[0];
-    if (file) loadFile(file);
+    if (file) loadFile(file, { resetStack: true });
   });
 }
 
-
-async function tryServerExport(foldData, title) {
-  try {
-    const res = await fetch('./export-fold', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, fold: foldData }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || `HTTP ${res.status}`);
-    }
-    const payload = await res.json().catch(() => null);
-    if (payload?.filename) {
-      console.log(`Saved ${payload.filename}`);
-    }
-    return { ok: true, filename: payload?.filename };
-  } catch (err) {
-    console.warn('Server export failed, falling back to download.', err);
-    return { ok: false };
-  }
-}
-
-async function startLeanJob(payload) {
-  const res = await fetch('./run-lean', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  return { jobId: data.job_id, filename: data.filename };
-}
-
-async function pollLeanStatus(jobId) {
-  const res = await fetch(`./run-lean/status?job_id=${encodeURIComponent(jobId)}`);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  return res.json();
-}
-
-function showLeanStatus(msg) {
-  el.leanNote.textContent = msg;
-  el.leanNote.hidden = false;
-}
-
-function clearLeanStatus() {
-  el.leanNote.textContent = '';
-  el.leanNote.hidden = true;
-}
-
-function stopLeanPolling() {
-  if (leanPollId) {
-    clearInterval(leanPollId);
-    leanPollId = null;
-  }
-}
-
-function setupExport() {
-  el.exportBtn.addEventListener('click', async () => {
-    if (!doc) {
-      showError('No pattern loaded. Please upload a FOLD file first.');
-      return;
-    }
-
-    clearLeanStatus();
-
-    try {
-      const foldData = await svgToFold(el.svg);
-      if (!foldData) {
-        showError('Could not export pattern.');
-        return;
-      }
-
-      // Get the title from the current document or use a default
-      const title = doc.renderJson ? JSON.parse(doc.renderJson('cp')).title || 'pattern' : 'pattern';
-      foldData.title = title;
-
-      const savedToServer = await tryServerExport(foldData, title);
-      if (savedToServer.ok) {
-        lastExportFilename = savedToServer.filename || `${title.replace(/\s+/g, '_')}.fold`;
-        showSuccess(`Saved to ./data/${savedToServer.filename || 'pattern.fold'}`);
-        clearError();
-        return;
-      }
-
-      const json = JSON.stringify(foldData, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${title.replace(/\s+/g, '_')}.fold`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      clearError();
-      showSuccess('File downloaded.');
-    } catch (err) {
-      showError(`Could not export pattern: ${err.message || err}`);
-    }
-  });
-}
-
-function setupLeanRun() {
-  el.runLeanBtn.addEventListener('click', async () => {
-    if (!doc) {
-      showError('No pattern loaded. Please upload a FOLD file first.');
-      return;
-    }
-
-    stopLeanPolling();
-    clearSuccess();
-    clearError();
-    showLeanStatus('Saving FOLD to server...');
-    el.runLeanBtn.disabled = true;
-
-    try {
-      const foldData = await svgToFold(el.svg);
-      if (!foldData) {
-        throw new Error('Could not export pattern.');
-      }
-
-      const title = doc.renderJson ? JSON.parse(doc.renderJson('cp')).title || 'pattern' : 'pattern';
-      foldData.title = title;
-
-      showLeanStatus('Starting Lean check...');
-      const { jobId, filename } = await startLeanJob({ title, fold: foldData });
-      lastExportFilename = filename || `${title.replace(/\s+/g, '_')}.fold`;
-
-      leanPollId = setInterval(async () => {
-        try {
-          const status = await pollLeanStatus(jobId);
-          if (status.status === 'done') {
-            stopLeanPolling();
-            el.runLeanBtn.disabled = false;
-            if (status.success) {
-              showLeanStatus('Lean compile succeeded.');
-              showSuccess('Lean check passed.');
-            } else {
-              showLeanStatus('Lean compile failed.');
-              showError(status.error || 'Lean check failed.');
-            }
-            return;
-          }
-
-          if (status.step === 'convert') {
-            showLeanStatus('Converting FOLD to Lean...');
-          } else if (status.step === 'compile') {
-            showLeanStatus('Compiling Lean...');
-          } else {
-            showLeanStatus('Queued...');
-          }
-        } catch (err) {
-          stopLeanPolling();
-          el.runLeanBtn.disabled = false;
-          showError(`Lean status failed: ${err.message || err}`);
-        }
-      }, 1000);
-    } catch (err) {
-      el.runLeanBtn.disabled = false;
-      showError(err.message || err);
-      clearLeanStatus();
-    }
-  });
-}
-
-async function loadFile(file) {
+async function loadFile(file, { resetStack = false } = {}) {
   try {
     const text = await file.text();
     doc = new FoldDocument(text);
+    seedGeometry(JSON.parse(doc.renderJson('cp')));
+    resetAxiomSelection();
     render();
+
+    if (resetStack) {
+      const res = await fetch('./clear-axioms', { method: 'POST' });
+      if (res.ok) applyStack((await res.json()).stack);
+    }
   } catch (err) {
     showError(`Could not load file: ${err.message || err}`);
   }
@@ -535,27 +348,532 @@ function clearSuccess() {
   el.successNote.hidden = true;
 }
 
-function enablePatternEditing() {
-  console.log('Entering edit mode');
-  setSelectedCreaseType(selectedCreaseType);
-  enableDrawingMode(el.svg, selectedCreaseType);
+// -----------------------------------------------------------------------------
+// Construction geometry — the growing pool of points/lines the paper makes
+// available. Seeded from corners/border edges; grown by committing the fold
+// line each stacked axiom actually produces, plus every point where that
+// fold crosses geometry that was already available.
+// -----------------------------------------------------------------------------
+
+function coordKey(entity) {
+  if (entity.kind === 'point') {
+    return `p:${entity.x.toFixed(6)},${entity.y.toFixed(6)}`;
+  }
+  const pts = [[entity.x1, entity.y1], [entity.x2, entity.y2]].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return `l:${pts[0][0].toFixed(6)},${pts[0][1].toFixed(6)}-${pts[1][0].toFixed(6)},${pts[1][1].toFixed(6)}`;
 }
 
-async function disablePatternEditing() {
-  console.log('Exiting edit mode');
-  disableDrawingMode(el.svg);
+function seedGeometry(data) {
+  availablePoints = [];
+  availableLines = [];
+  geometryHistory = [];
+  pointCounter = 0;
+  lineCounter = 0;
+  paperBounds = data.bounds;
 
-  // Convert the SVG back to FOLD format and update the document
-  try {
-    const foldData = await svgToFold(el.svg);
-    if (foldData && doc) {
-      // Create a new FoldDocument from the updated data
-      const foldJson = JSON.stringify(foldData);
-      doc = new FoldDocument(foldJson);
-      render();
+  const pointForCoord = (x, y) => {
+    const existing = availablePoints.find(p => Geo.pointsEqual(p, { x, y }));
+    if (existing) return existing;
+    pointCounter += 1;
+    const p = { kind: 'point', id: `P${pointCounter}`, x, y };
+    availablePoints.push(p);
+    return p;
+  };
+
+  for (const edge of data.edges) {
+    if (edge.kind !== 'B') continue;
+    pointForCoord(edge.x1, edge.y1);
+    pointForCoord(edge.x2, edge.y2);
+    const line = Geo.lineFromPoints({ x: edge.x1, y: edge.y1 }, { x: edge.x2, y: edge.y2 });
+    if (!line) continue;
+    lineCounter += 1;
+    availableLines.push({
+      kind: 'line', id: `L${lineCounter}`,
+      a: line.a, b: line.b, c: line.c,
+      x1: edge.x1, y1: edge.y1, x2: edge.x2, y2: edge.y2,
+    });
+  }
+}
+
+function addAvailablePoint(x, y) {
+  const dup = availablePoints.find(p => Geo.pointsEqual(p, { x, y }));
+  if (dup) return { id: dup.id, isNew: false };
+  pointCounter += 1;
+  const p = { kind: 'point', id: `P${pointCounter}`, x, y };
+  availablePoints.push(p);
+  return { id: p.id, isNew: true };
+}
+
+function commitSolutionToGeometry(solution) {
+  lineCounter += 1;
+  const newLine = {
+    kind: 'line', id: `L${lineCounter}`,
+    a: solution.a, b: solution.b, c: solution.c,
+    x1: solution.x1, y1: solution.y1, x2: solution.x2, y2: solution.y2,
+  };
+
+  const addedPointIds = [];
+  for (const existing of availableLines) {
+    const ix = Geo.intersectLines(newLine, existing);
+    if (!ix) continue;
+    if (!Geo.pointOnSegment(ix, newLine) || !Geo.pointOnSegment(ix, existing)) continue;
+    const { id, isNew } = addAvailablePoint(ix.x, ix.y);
+    if (isNew) addedPointIds.push(id);
+  }
+
+  availableLines.push(newLine);
+  geometryHistory.push({ lineId: newLine.id, addedPointIds });
+}
+
+function undoLastGeometry() {
+  const entry = geometryHistory.pop();
+  if (!entry) return;
+  availableLines = availableLines.filter(l => l.id !== entry.lineId);
+  availablePoints = availablePoints.filter(p => !entry.addedPointIds.includes(p.id));
+}
+
+// Best-effort reconstruction after a page reload: the server keeps the axiom
+// stack (identifiers + coordinates) but not which concrete fold a
+// multi-solution axiom resolved to, so ambiguous steps just take the first
+// valid candidate rather than leaving the canvas with nothing pickable.
+function replayStackIntoGeometry(stackData) {
+  for (const axiom of stackData.axioms) {
+    const entities = {};
+    for (const [slotName, id] of Object.entries(axiom.params)) {
+      entities[slotName] = stackData.entities[id];
     }
+    const solver = AXIOM_SOLVER[axiom.type];
+    if (!solver) continue;
+    const rawLines = solver(entities) || [];
+    const clipped = rawLines
+      .map(line => {
+        const seg = Geo.clipLineToBox(line, paperBounds);
+        return seg ? { a: line.a, b: line.b, c: line.c, ...seg } : null;
+      })
+      .filter(Boolean);
+    if (clipped.length === 0) continue;
+    commitSolutionToGeometry(clipped[0]);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Huzita axiom panel — pick geometric entities on the canvas, stack axiom
+// calls against the Python server, and watch the construction accumulate
+// both as a list and as markers drawn directly on the crease pattern.
+// -----------------------------------------------------------------------------
+
+function setAxiomNote(msg, kind = 'info') {
+  if (!msg) {
+    el.axiomNote.hidden = true;
+    el.axiomNote.textContent = '';
+    return;
+  }
+  el.axiomNote.textContent = msg;
+  el.axiomNote.hidden = false;
+  const color = kind === 'error' ? 'var(--mountain)' : kind === 'success' ? '#2f7a4a' : 'var(--rule)';
+  el.axiomNote.style.color = kind === 'info' ? '' : color;
+  el.axiomNote.style.borderLeftColor = color;
+}
+
+function setBuildNote(msg, kind = 'info') {
+  if (!msg) {
+    el.buildNote.hidden = true;
+    el.buildNote.textContent = '';
+    return;
+  }
+  el.buildNote.textContent = msg;
+  el.buildNote.hidden = false;
+  const color = kind === 'error' ? 'var(--mountain)' : kind === 'success' ? '#2f7a4a' : 'var(--rule)';
+  el.buildNote.style.color = kind === 'info' ? '' : color;
+  el.buildNote.style.borderLeftColor = color;
+}
+
+function formatEntity(entity) {
+  if (!entity) return '— unset —';
+  const fmt = n => Number.isInteger(n) ? n : n.toFixed(2);
+  if (entity.kind === 'point') return `${entity.id ? entity.id + ' ' : ''}(${fmt(entity.x)}, ${fmt(entity.y)})`;
+  return `${entity.id ? entity.id + ' ' : ''}(${fmt(entity.x1)}, ${fmt(entity.y1)}) → (${fmt(entity.x2)}, ${fmt(entity.y2)})`;
+}
+
+function resetAxiomSelection() {
+  selectedAxiomType = null;
+  axiomSlotValues = {};
+  pickingSlotName = null;
+  candidateSolutions = [];
+  chosenSolution = null;
+  disableEntityPickMode(el.svg);
+  el.axiomButtons.forEach(b => b.classList.remove('active'));
+  el.axiomDesc.textContent = 'Select an axiom to begin stacking a fold.';
+  setAxiomNote('');
+  renderAxiomSlots();
+}
+
+function selectAxiom(type) {
+  selectedAxiomType = type;
+  axiomSlotValues = {};
+  for (const slot of AXIOMS[type].slots) axiomSlotValues[slot.name] = null;
+  pickingSlotName = null;
+  candidateSolutions = [];
+  chosenSolution = null;
+  disableEntityPickMode(el.svg);
+  el.axiomDesc.textContent = AXIOMS[type].desc;
+  el.axiomButtons.forEach(b => b.classList.toggle('active', Number(b.dataset.axiom) === type));
+  setAxiomNote('');
+  renderAxiomSlots();
+  refreshAxiomMarkers();
+}
+
+function renderAxiomSlots() {
+  el.axiomSlots.innerHTML = '';
+  if (!selectedAxiomType) {
+    updateAddAxiomButtonState();
+    return;
+  }
+  for (const slot of AXIOMS[selectedAxiomType].slots) {
+    const value = axiomSlotValues[slot.name];
+    const isPicking = pickingSlotName === slot.name;
+
+    const row = document.createElement('div');
+    row.className = 'axiom-slot' + (value ? ' filled' : '') + (isPicking ? ' picking' : '');
+
+    const label = document.createElement('span');
+    label.className = 'axiom-slot-label';
+    label.textContent = `${slot.name} (${slot.kind})`;
+
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'axiom-slot-value';
+    valueSpan.textContent = formatEntity(value);
+
+    const pickBtn = document.createElement('button');
+    pickBtn.className = 'axiom-slot-pick';
+    pickBtn.classList.toggle('active-mode', isPicking);
+    pickBtn.textContent = isPicking ? 'Click canvas…' : (value ? 'Re-pick' : 'Pick');
+    pickBtn.addEventListener('click', () => startPickingSlot(slot.name, slot.kind));
+
+    row.append(label, valueSpan, pickBtn);
+    el.axiomSlots.appendChild(row);
+  }
+  updateAddAxiomButtonState();
+}
+
+function updateAddAxiomButtonState() {
+  const slotsReady = !!selectedAxiomType && AXIOMS[selectedAxiomType].slots.every(s => axiomSlotValues[s.name]);
+  el.addAxiomBtn.disabled = !(slotsReady && chosenSolution);
+}
+
+function startPickingSlot(name, kind) {
+  if (!doc) {
+    setAxiomNote('Load a pattern first.', 'error');
+    return;
+  }
+  if (mode !== 'cp') setMode('cp');
+
+  const candidates = kind === 'point' ? availablePoints : availableLines;
+  if (candidates.length === 0) {
+    setAxiomNote(`No ${kind}s available yet — stack a fold first.`, 'error');
+    return;
+  }
+
+  pickingSlotName = name;
+  candidateSolutions = [];
+  chosenSolution = null;
+  renderAxiomSlots();
+  setAxiomNote(`Click on the canvas to pick ${name} (${kind}).`);
+
+  enableEntityPickMode(
+    el.svg,
+    candidates,
+    (entity) => {
+      axiomSlotValues[name] = entity;
+      pickingSlotName = null;
+      disableEntityPickMode(el.svg);
+      renderAxiomSlots();
+      computeCandidates();
+    },
+    () => {
+      setAxiomNote(`No available ${kind} near that click — pick one of the highlighted ${kind}s.`, 'error');
+    },
+  );
+}
+
+// Once every slot is filled, compute the real fold(s) this axiom call would
+// produce. 0 solutions means these entities can't actually be folded
+// together on this paper; >1 means the user must choose which fold to use
+// (Huzita axioms 3, 5 and 6 can have multiple valid folds).
+function computeCandidates() {
+  candidateSolutions = [];
+  chosenSolution = null;
+
+  if (!selectedAxiomType || !AXIOMS[selectedAxiomType].slots.every(s => axiomSlotValues[s.name])) {
+    updateAddAxiomButtonState();
+    refreshAxiomMarkers();
+    return;
+  }
+
+  const solver = AXIOM_SOLVER[selectedAxiomType];
+  const rawLines = solver(axiomSlotValues) || [];
+  candidateSolutions = rawLines
+    .map(line => {
+      const seg = Geo.clipLineToBox(line, paperBounds);
+      if (!seg) return null;
+      return { kind: 'line', a: line.a, b: line.b, c: line.c, ...seg };
+    })
+    .filter(Boolean);
+
+  if (candidateSolutions.length === 0) {
+    setAxiomNote('No real fold places these entities on the paper — try different points/lines.', 'error');
+  } else if (candidateSolutions.length === 1) {
+    chosenSolution = candidateSolutions[0];
+    setAxiomNote('Fold computed — ready to add.', 'success');
+  } else {
+    setAxiomNote(`${candidateSolutions.length} possible folds — click the one to use on the canvas.`, 'info');
+    startChoosingSolution();
+  }
+
+  updateAddAxiomButtonState();
+  refreshAxiomMarkers();
+}
+
+function startChoosingSolution() {
+  enableEntityPickMode(
+    el.svg,
+    candidateSolutions,
+    (picked) => {
+      chosenSolution = picked;
+      disableEntityPickMode(el.svg);
+      setAxiomNote('Fold selected — ready to add.', 'success');
+      updateAddAxiomButtonState();
+      refreshAxiomMarkers();
+    },
+    () => {
+      setAxiomNote('Click directly on one of the highlighted candidate folds.', 'error');
+    },
+    20,
+  );
+}
+
+async function addAxiomToStack() {
+  if (!selectedAxiomType || !chosenSolution) return;
+  const params = {};
+  for (const slot of AXIOMS[selectedAxiomType].slots) {
+    params[slot.name] = axiomSlotValues[slot.name];
+  }
+
+  el.addAxiomBtn.disabled = true;
+  try {
+    const res = await fetch('./add-axiom', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: selectedAxiomType, params }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    commitSolutionToGeometry(chosenSolution);
+    applyStack(data.stack);
+    setAxiomNote(`Axiom ${selectedAxiomType} added as step #${data.axiom.index}.`, 'success');
+
+    for (const slot of AXIOMS[selectedAxiomType].slots) axiomSlotValues[slot.name] = null;
+    candidateSolutions = [];
+    chosenSolution = null;
+    renderAxiomSlots();
+    refreshAxiomMarkers();
   } catch (err) {
-    showError(`Could not update pattern: ${err.message || err}`);
+    setAxiomNote(`Could not add axiom: ${err.message || err}`, 'error');
+    updateAddAxiomButtonState();
+  }
+}
+
+function applyStack(stackData) {
+  stackEntities = stackData.entities || {};
+  stackAxioms = stackData.axioms || [];
+
+  renderStackList();
+  el.leanPreview.textContent = stackData.lean_preview || '';
+  el.leanPreviewWrap.hidden = stackAxioms.length === 0;
+  el.undoAxiomBtn.disabled = stackAxioms.length === 0;
+  el.clearStackBtn.disabled = stackAxioms.length === 0;
+  el.buildLeanBtn.disabled = stackAxioms.length === 0;
+}
+
+function renderStackList() {
+  el.stackList.innerHTML = '';
+  if (stackAxioms.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'No axioms stacked yet.';
+    el.stackList.appendChild(li);
+    return;
+  }
+  for (const axiom of stackAxioms) {
+    const keys = Object.values(axiom.params)
+      .map(id => stackEntities[id])
+      .filter(Boolean)
+      .map(coordKey);
+    const paramsText = Object.entries(axiom.params).map(([k, v]) => `${k}=${v}`).join(', ');
+
+    const li = document.createElement('li');
+    const indexSpan = document.createElement('span');
+    indexSpan.className = 'stack-index';
+    indexSpan.textContent = `#${axiom.index}`;
+    const paramsSpan = document.createElement('span');
+    paramsSpan.className = 'stack-params';
+    paramsSpan.textContent = paramsText;
+
+    li.append(indexSpan, `Axiom ${axiom.type}`, paramsSpan);
+    li.addEventListener('click', () => pulseEntities(keys));
+    el.stackList.appendChild(li);
+  }
+}
+
+function pulseEntities(keys) {
+  const world = el.svg.querySelector('g');
+  if (!world) return;
+  for (const key of keys) {
+    world.querySelectorAll(`[data-coord-key="${CSS.escape(key)}"]`).forEach(node => {
+      node.classList.remove('pulse');
+      void node.getBoundingClientRect(); // restart the CSS animation
+      node.classList.add('pulse');
+    });
+  }
+}
+
+function refreshAxiomMarkers() {
+  if (!el.svg || mode !== 'cp') return;
+  const markers = [];
+
+  for (const p of availablePoints) {
+    markers.push({ kind: 'point', x: p.x, y: p.y, variant: 'available', label: p.id, coordKey: coordKey(p) });
+  }
+  for (const l of availableLines) {
+    markers.push({ kind: 'line', x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, variant: 'available', label: l.id, coordKey: coordKey(l) });
+  }
+
+  if (selectedAxiomType) {
+    for (const slot of AXIOMS[selectedAxiomType].slots) {
+      const entity = axiomSlotValues[slot.name];
+      if (!entity) continue;
+      if (entity.kind === 'point') {
+        markers.push({ kind: 'point', x: entity.x, y: entity.y, variant: 'selected', label: slot.name });
+      } else {
+        markers.push({ kind: 'line', x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2, variant: 'selected', label: slot.name });
+      }
+    }
+    for (const cand of candidateSolutions) {
+      markers.push({ kind: 'line', x1: cand.x1, y1: cand.y1, x2: cand.x2, y2: cand.y2, variant: 'candidate' });
+    }
+  }
+
+  drawAxiomMarkers(el.svg, markers);
+}
+
+function setupHuzitaPanel() {
+  el.axiomButtons.forEach(btn => {
+    btn.addEventListener('click', () => selectAxiom(Number(btn.dataset.axiom)));
+  });
+  el.addAxiomBtn.addEventListener('click', addAxiomToStack);
+}
+
+function stopBuildPolling() {
+  if (buildPollId) {
+    clearInterval(buildPollId);
+    buildPollId = null;
+  }
+}
+
+async function pollBuildStatus(jobId) {
+  const res = await fetch(`./build-lean/status?job_id=${encodeURIComponent(jobId)}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+async function buildLeanFromStack() {
+  stopBuildPolling();
+  setBuildNote('Starting Lean build...');
+  el.buildLeanBtn.disabled = true;
+
+  try {
+    const res = await fetch('./build-lean', { method: 'POST' });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    const { job_id: jobId } = await res.json();
+
+    buildPollId = setInterval(async () => {
+      try {
+        const status = await pollBuildStatus(jobId);
+        if (status.status === 'done') {
+          stopBuildPolling();
+          el.buildLeanBtn.disabled = stackAxioms.length === 0;
+          if (status.success) {
+            setBuildNote('Lean build succeeded.', 'success');
+          } else {
+            setBuildNote(status.error || 'Lean build failed.', 'error');
+          }
+          return;
+        }
+        setBuildNote(status.step === 'compile' ? 'Compiling Lean...' : 'Queued...');
+      } catch (err) {
+        stopBuildPolling();
+        el.buildLeanBtn.disabled = stackAxioms.length === 0;
+        setBuildNote(`Build status failed: ${err.message || err}`, 'error');
+      }
+    }, 1000);
+  } catch (err) {
+    el.buildLeanBtn.disabled = stackAxioms.length === 0;
+    setBuildNote(`Could not start build: ${err.message || err}`, 'error');
+  }
+}
+
+function setupStackPanel() {
+  el.undoAxiomBtn.addEventListener('click', async () => {
+    try {
+      const res = await fetch('./undo-axiom', { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (data.status === 'undone') undoLastGeometry();
+      applyStack(data.stack);
+      refreshAxiomMarkers();
+    } catch (err) {
+      setBuildNote(`Undo failed: ${err.message || err}`, 'error');
+    }
+  });
+
+  el.clearStackBtn.addEventListener('click', async () => {
+    if (!confirm('Clear the whole construction stack?')) return;
+    try {
+      const res = await fetch('./clear-axioms', { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      applyStack(data.stack);
+      if (doc) seedGeometry(JSON.parse(doc.renderJson('cp')));
+      resetAxiomSelection();
+      refreshAxiomMarkers();
+      setBuildNote('');
+    } catch (err) {
+      setBuildNote(`Clear failed: ${err.message || err}`, 'error');
+    }
+  });
+
+  el.buildLeanBtn.addEventListener('click', buildLeanFromStack);
+}
+
+async function loadStack() {
+  try {
+    const res = await fetch('./axioms');
+    if (!res.ok) return;
+    const data = await res.json();
+    applyStack(data);
+    if (paperBounds) replayStackIntoGeometry(data);
+    refreshAxiomMarkers();
+  } catch (err) {
+    console.warn('Could not load axiom stack:', err);
   }
 }
 
@@ -570,12 +888,10 @@ async function main() {
   setupFileInput();
   setupViewToggle();
   setupSlider();
-  setupExport();
-  setupLeanRun();
-  render();
-  console.log('About to setup edit mode');
-  setupEditMode();
   setupThemeSelector();
+  setupHuzitaPanel();
+  setupStackPanel();
+  render();
 
   // Set up default file
   try {
@@ -583,6 +899,8 @@ async function main() {
   } catch (err) {
     console.warn("Failed to preload default pattern:", err);
   }
+
+  await loadStack();
 
   console.log('Setup complete');
 }

@@ -4,6 +4,11 @@
 //   render2d(doc, mode, svgEl) → render data (so the caller can update stats)
 //   resetView2d(svgEl)         → reset pan/zoom
 //   attachPanZoom2d(svgEl)     → install pan/zoom handlers (call once)
+//
+// Also exposes entity picking + marker overlay helpers used by the Huzita
+// axiom panel to let the user select points/lines directly on the pattern.
+// There is no in-app crease drawing or FOLD export here — this module only
+// renders a loaded FOLD document and lets the Huzita panel read points off it.
 
 const EDGE_STYLE = {
   M: { stroke: '#B8352C', width: 1.4, dash: null },
@@ -18,18 +23,6 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 
 // Per-SVG state — tied to the element so multiple SVGs could coexist.
 const state = new WeakMap();
-
-// Drawing mode state
-let drawingMode = false;
-let isDrawing = false;
-let startPos = null;
-let currentLine = null;
-let selectedCreaseType = 'U';
-let pointMode = false;
-
-export function setSelectedCreaseType(type) {
-  selectedCreaseType = type;
-}
 
 export function render2d(doc, mode, svg) {
   const data = JSON.parse(doc.renderJson(mode));
@@ -79,7 +72,6 @@ export function render2d(doc, mode, svg) {
       const scaled = style.dash.split(',').map(n => parseFloat(n) * strokeScale).join(',');
       line.setAttribute('stroke-dasharray', scaled);
     }
-    // Store the edge assignment so it survives SVG serialization
     line.setAttribute('data-type', edge.kind);
     world.appendChild(line);
   }
@@ -108,310 +100,6 @@ export function render2d(doc, mode, svg) {
   }
 
   return data;
-}
-
-export async function svgToFold(svg) {
-  // 1. Locate the 'world' group where the lines and dots live
-  const world = svg.querySelector('g');
-  if (!world) return null;
-
-  const vertices = [];
-  const edges = [];
-  const edgeAssignment = [];
-
-  const snapEps = 1e-3;
-  const snap01 = (v) => {
-    if (Math.abs(v) <= snapEps) return 0;
-    if (Math.abs(v - 1) <= snapEps) return 1;
-    return v;
-  };
-
-  // Helper to find or add a vertex and return its index
-  const getVertexIndex = (x, y) => {
-    // Rounding helps avoid floating point precision issues from SVG transforms
-    const precision = 6;
-    const rx = parseFloat(snap01(x).toFixed(precision));
-    const ry = parseFloat(snap01(y).toFixed(precision));
-
-    let index = vertices.findIndex(v => v[0] === rx && v[1] === ry);
-    if (index === -1) {
-      index = vertices.findIndex(v => Math.abs(v[0] - rx) <= snapEps && Math.abs(v[1] - ry) <= snapEps);
-    }
-    if (index === -1) {
-      vertices.push([rx, ry]);
-      index = vertices.length - 1;
-    }
-    return index;
-  };
-
-  // 2. Iterate through lines to build the edge graph
-  // We ignore polygons and circles as they are redundant for the core graph
-  const lines = world.querySelectorAll('line');
-
-  lines.forEach(line => {
-    const x1 = parseFloat(line.getAttribute('x1'));
-    const y1 = parseFloat(line.getAttribute('y1'));
-    const x2 = parseFloat(line.getAttribute('x2'));
-    const y2 = parseFloat(line.getAttribute('y2'));
-    const stroke = line.getAttribute('stroke');
-
-    const v1 = getVertexIndex(x1, y1);
-    const v2 = getVertexIndex(x2, y2);
-
-    edges.push([v1, v2]);
-
-    // Get assignment from data-type attribute if present, otherwise reverse-map from color
-    let assignment = line.getAttribute('data-type');
-    if (!assignment) {
-      // Fall back to reverse-mapping the stroke color for compatibility
-      assignment = 'U'; // Default Unassigned
-      for (const [key, style] of Object.entries(EDGE_STYLE)) {
-        if (style.stroke === stroke) {
-          assignment = key;
-          break;
-        }
-      }
-    }
-    edgeAssignment.push(assignment);
-  });
-
-  const freePoints = world.querySelectorAll('circle[data-point="1"]');
-  freePoints.forEach(circle => {
-    const x = parseFloat(circle.getAttribute('cx'));
-    const y = parseFloat(circle.getAttribute('cy'));
-    if (Number.isFinite(x) && Number.isFinite(y)) {
-      getVertexIndex(x, y);
-    }
-  });
-
-  // 3. Compute edges_foldAngle based on assignment
-  const foldAngles = edgeAssignment.map(assignment => {
-    switch (assignment) {
-      case 'M': return 180;
-      case 'V': return -180;
-      case 'B': return 0;
-      case 'F': return 0;
-      case 'U': return 180;
-      default: return 0;
-    }
-  });
-
-  const hasMarkedCreases = edgeAssignment.some(a => a === 'M' || a === 'V');
-
-  // 4. Try to compute faces using Rabbit Ear
-  let earGraph = null;
-  try {
-    const mod = await import('rabbit-ear');
-    const ear = mod.default ?? mod;
-    console.log('Rabbit Ear loaded, keys:', Object.keys(ear).slice(0, 10));
-
-    let converter = null;
-    if (typeof ear.convert?.svgToFold === 'function') {
-      converter = ear.convert.svgToFold;
-      console.log('Using ear.convert.svgToFold');
-    } else if (typeof ear.svgToFold === 'function') {
-      converter = ear.svgToFold;
-      console.log('Using ear.svgToFold');
-    }
-
-    if (converter) {
-      const serializer = new XMLSerializer();
-      const svgText = serializer.serializeToString(svg);
-      console.log('SVG text length:', svgText.length);
-
-      earGraph = converter(svgText);
-      console.log('Rabbit Ear graph keys:', Object.keys(earGraph || {}).slice(0, 15));
-      if (earGraph && earGraph.vertices_coords) {
-        console.log('Rabbit Ear vertices:', earGraph.vertices_coords.length, 'edges:', earGraph.edges_vertices?.length);
-      }
-    }
-  } catch (err) {
-    console.error('Could not compute faces with Rabbit Ear:', err.message);
-  }
-
-  // 5. Construct the FOLD object
-  // Use Rabbit Ear's graph if available (it has proper face topology),
-  // but overlay our custom edge assignments
-  let fold;
-
-  // 5. Build a map of our assignments keyed by coordinate pairs for robust matching
-  // This ensures assignments are preserved even when Rabbit Ear re-parses the SVG
-  const ourAssignmentMap = new Map();
-  lines.forEach((line, idx) => {
-    const x1 = snap01(parseFloat(line.getAttribute('x1')));
-    const y1 = snap01(parseFloat(line.getAttribute('y1')));
-    const x2 = snap01(parseFloat(line.getAttribute('x2')));
-    const y2 = snap01(parseFloat(line.getAttribute('y2')));
-
-    // Use our stored data-type if available, otherwise use the computed assignment
-    let assignment = line.getAttribute('data-type') || edgeAssignment[idx] || 'U';
-
-    // Create a canonical key (always with smaller coordinate first for consistent lookup)
-    const key = `${Math.min(x1, x2).toFixed(6)},${Math.min(y1, y2).toFixed(6)}-${Math.max(x1, x2).toFixed(6)},${Math.max(y1, y2).toFixed(6)}`;
-    ourAssignmentMap.set(key, assignment);
-    console.log(`Stored assignment for edge: ${key} = ${assignment}`);
-  });
-
-  if (earGraph && earGraph.vertices_coords && earGraph.edges_vertices) {
-    console.log('Using Rabbit Ear graph as base');
-    // Create assignment mapping: overlay our custom edge assignments onto Rabbit Ear's edges
-    const earAssignment = (earGraph.edges_assignment || []).slice(); // copy
-
-    const normalizeEarVertex = ([x, y]) => [snap01(x), snap01(-y)];
-    const snappedVertices = earGraph.vertices_coords.map(normalizeEarVertex);
-
-    const segments = [];
-    lines.forEach((line, idx) => {
-      const x1 = snap01(parseFloat(line.getAttribute('x1')));
-      const y1 = snap01(parseFloat(line.getAttribute('y1')));
-      const x2 = snap01(parseFloat(line.getAttribute('x2')));
-      const y2 = snap01(parseFloat(line.getAttribute('y2')));
-      const assignment = line.getAttribute('data-type') || edgeAssignment[idx] || 'U';
-      segments.push({ x1, y1, x2, y2, assignment });
-    });
-
-    const dist2 = (ax, ay, bx, by) => {
-      const dx = ax - bx;
-      const dy = ay - by;
-      return dx * dx + dy * dy;
-    };
-
-    const pointToSegmentDist2 = (px, py, ax, ay, bx, by) => {
-      const abx = bx - ax;
-      const aby = by - ay;
-      const apx = px - ax;
-      const apy = py - ay;
-      const abLen2 = abx * abx + aby * aby;
-      if (abLen2 === 0) return dist2(px, py, ax, ay);
-      let t = (apx * abx + apy * aby) / abLen2;
-      t = Math.max(0, Math.min(1, t));
-      const cx = ax + t * abx;
-      const cy = ay + t * aby;
-      return dist2(px, py, cx, cy);
-    };
-
-    const assignFromSegments = (x1, y1, x2, y2) => {
-      const tol2 = 1e-4;
-      let bestAny = null;
-      let bestAnyDist = Infinity;
-      let bestMarked = null;
-      let bestMarkedDist = Infinity;
-
-      for (const seg of segments) {
-        const d1 = pointToSegmentDist2(x1, y1, seg.x1, seg.y1, seg.x2, seg.y2);
-        const d2 = pointToSegmentDist2(x2, y2, seg.x1, seg.y1, seg.x2, seg.y2);
-        const d = Math.max(d1, d2);
-        if (d < bestAnyDist) {
-          bestAnyDist = d;
-          bestAny = seg.assignment;
-        }
-        if ((seg.assignment === 'M' || seg.assignment === 'V') && d < bestMarkedDist) {
-          bestMarkedDist = d;
-          bestMarked = seg.assignment;
-        }
-      }
-
-      if (bestMarked !== null && bestMarkedDist <= tol2) {
-        return bestMarked;
-      }
-      if (bestAny !== null && bestAnyDist <= tol2) {
-        return bestAny;
-      }
-      return null;
-    };
-
-    // For each Rabbit Ear edge, try to find our custom assignment
-    earGraph.edges_vertices.forEach((edge, eIdx) => {
-      const [ev1, ev2] = edge;
-      const [ex1, ey1] = snappedVertices[ev1];
-      const [ex2, ey2] = snappedVertices[ev2];
-
-      // Create a canonical key matching how we stored them
-      const key = `${Math.min(ex1, ex2).toFixed(6)},${Math.min(ey1, ey2).toFixed(6)}-${Math.max(ex1, ex2).toFixed(6)},${Math.max(ey1, ey2).toFixed(6)}`;
-
-      if (ourAssignmentMap.has(key)) {
-        const assignment = ourAssignmentMap.get(key);
-        earAssignment[eIdx] = assignment;
-        console.log(`Applied custom assignment to Rabbit Ear edge ${eIdx}: ${assignment}`);
-      } else {
-        const assignment = assignFromSegments(ex1, ey1, ex2, ey2);
-        if (assignment) {
-          earAssignment[eIdx] = assignment;
-        }
-      }
-    });
-
-    const earHasMarked = earAssignment.some(a => a === 'M' || a === 'V');
-    if (hasMarkedCreases && !earHasMarked) {
-      const verticesEdges = vertices.map(() => []);
-      edges.forEach((edge, idx) => {
-        const [v1, v2] = edge;
-        verticesEdges[v1].push(idx);
-        verticesEdges[v2].push(idx);
-      });
-
-      fold = {
-        file_spec: 1.1,
-        file_creator: "Crease Pattern Inspector",
-        file_classes: ["singleModel"],
-        frame_classes: ["creasePattern"],
-        vertices_coords: vertices,
-        edges_vertices: edges,
-        edges_assignment: edgeAssignment,
-        edges_foldAngle: foldAngles,
-        vertices_edges: verticesEdges,
-      };
-      if (earGraph.faces_vertices) fold.faces_vertices = earGraph.faces_vertices;
-    } else {
-      fold = {
-        file_spec: 1.1,
-        file_creator: "Crease Pattern Inspector",
-        file_classes: ["singleModel"],
-        frame_classes: ["creasePattern"],
-        vertices_coords: snappedVertices,
-        edges_vertices: earGraph.edges_vertices,
-        edges_assignment: earAssignment,
-        edges_foldAngle: earGraph.edges_foldAngle || earAssignment.map(a => {
-          switch (a) {
-            case 'M': return 180;
-            case 'V': return -180;
-            default: return 0;
-          }
-        }),
-      };
-
-      if (earGraph.vertices_edges) fold.vertices_edges = earGraph.vertices_edges;
-      if (earGraph.faces_vertices) fold.faces_vertices = earGraph.faces_vertices;
-      if (earGraph.faces_edges) fold.faces_edges = earGraph.faces_edges;
-    }
-
-  } else {
-    // 6. Fallback: construct FOLD without face topology
-    console.log('Rabbit Ear unavailable, using local computation (no faces)');
-    // Compute vertices_edges locally
-    const verticesEdges = vertices.map(() => []);
-    edges.forEach((edge, idx) => {
-      const [v1, v2] = edge;
-      verticesEdges[v1].push(idx);
-      verticesEdges[v2].push(idx);
-    });
-
-    fold = {
-      file_spec: 1.1,
-      file_creator: "Crease Pattern Inspector",
-      file_classes: ["singleModel"],
-      frame_classes: ["creasePattern"],
-      vertices_coords: vertices,
-      edges_vertices: edges,
-      edges_assignment: edgeAssignment,
-      edges_foldAngle: foldAngles,
-      vertices_edges: verticesEdges,
-    };
-  }
-
-  // 7. Done
-  console.log('Final FOLD keys:', Object.keys(fold));
-  return fold;
 }
 
 export function resetView2d(svg) {
@@ -450,138 +138,185 @@ function svgToWorld(x, y) {
   return { x, y: -y };
 }
 
-export function enableDrawingMode(svg, creaseType = 'U') {
-  selectedCreaseType = creaseType;
-  drawingMode = true;
+// -----------------------------------------------------------------------------
+// Entity picking (points / lines) — used by the Huzita axiom panel to let the
+// user select the geometric entities each axiom call needs, directly on the
+// crease pattern.
+// -----------------------------------------------------------------------------
+
+let entityPickMode = false;
+
+export function isEntityPickMode() {
+  return entityPickMode;
+}
+
+export function screenToWorld(svg, clientX, clientY) {
+  const pos = screenToSvg(svg, clientX, clientY);
+  if (!pos) return null;
+  return svgToWorld(pos.x, pos.y);
+}
+
+function dist(ax, ay, bx, by) {
+  return Math.hypot(ax - bx, ay - by);
+}
+
+function pointToSegmentDistance(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const abLen2 = abx * abx + aby * aby;
+  if (abLen2 === 0) return dist(px, py, ax, ay);
+  let t = ((px - ax) * abx + (py - ay) * aby) / abLen2;
+  t = Math.max(0, Math.min(1, t));
+  return dist(px, py, ax + t * abx, ay + t * aby);
+}
+
+function pickTolerance(svg, multiplier = 14) {
+  const s = state.get(svg);
+  const strokeScale = s?.strokeScale || 1;
+  return strokeScale * multiplier;
+}
+
+// Only geometry the construction has actually made available can be picked —
+// there is no "click anywhere" fallback. `candidates` is a flat array of
+// point entities ({x,y,...}) or line entities ({x1,y1,x2,y2,...}); which one
+// a given item is is inferred from its shape, so points and lines can be
+// mixed in principle, though callers pass one kind at a time.
+export function findNearestCandidate(candidates, worldX, worldY, tolerance) {
+  let best = null;
+  let bestD = Infinity;
+  for (const c of candidates) {
+    const d = 'x1' in c
+      ? pointToSegmentDistance(worldX, worldY, c.x1, c.y1, c.x2, c.y2)
+      : dist(worldX, worldY, c.x, c.y);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best && bestD <= tolerance ? best : null;
+}
+
+// onPick(entity) fires with the exact candidate object that was hit.
+// onMiss() fires when the click doesn't land near any candidate.
+export function enableEntityPickMode(svg, candidates, onPick, onMiss, toleranceMultiplier = 14) {
+  disableEntityPickMode(svg);
+  entityPickMode = true;
   svg.style.cursor = 'crosshair';
 
+  const handler = (e) => {
+    if (!e.isPrimary) return;
+    const world = screenToWorld(svg, e.clientX, e.clientY);
+    if (!world) return;
+
+    e.preventDefault();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    e.stopPropagation();
+
+    const tol = pickTolerance(svg, toleranceMultiplier);
+    const hit = findNearestCandidate(candidates, world.x, world.y, tol);
+    if (!hit) {
+      if (onMiss) onMiss();
+      return;
+    }
+    onPick(hit);
+  };
+
+  svg.addEventListener('pointerdown', handler, true);
+  svg._pickHandler = handler;
+}
+
+export function disableEntityPickMode(svg) {
+  entityPickMode = false;
+  svg.style.cursor = 'default';
+  if (svg._pickHandler) {
+    svg.removeEventListener('pointerdown', svg._pickHandler, true);
+    delete svg._pickHandler;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Axiom entity markers — a persistent overlay showing:
+//  - the points/lines the construction has made available to pick from
+//  - the ones selected for the axiom currently being built
+//  - candidate fold solutions awaiting disambiguation (axioms with >1 fold)
+// Redrawn after every render() call and every geometry update.
+// marker.variant: 'available' | 'selected' | 'candidate'
+// marker.coordKey: opaque string used to pulse-highlight from the stack list
+// -----------------------------------------------------------------------------
+
+// Dash patterns in the same world-relative units as EDGE_STYLE's dashes
+// above — scaled by strokeScale before being applied, never used raw.
+const MARKER_DASH = {
+  available: [2, 2.4],
+  candidate: [4, 2.5],
+};
+
+export function drawAxiomMarkers(svg, markers) {
+  clearAxiomMarkers(svg);
+  const world = svg.querySelector('g');
+  if (!world) return;
   const s = state.get(svg);
   const strokeScale = s?.strokeScale || 1;
 
-  const handleDrawStart = (e) => {
-    if (drawingMode && e.isPrimary) {
-      const pos = screenToSvg(svg, e.clientX, e.clientY);
-      if (pos) {
-        isDrawing = true;
-        startPos = pos;
-        const worldPos = svgToWorld(pos.x, pos.y);
+  const layer = document.createElementNS(SVG_NS, 'g');
+  layer.setAttribute('class', 'axiom-marker-layer');
+  world.appendChild(layer);
 
-        // Create a preview line element
-        const world = svg.querySelector('g');
-        if (world) {
-          currentLine = document.createElementNS(SVG_NS, 'line');
-          currentLine.setAttribute('x1', worldPos.x);
-          currentLine.setAttribute('y1', worldPos.y);
-          currentLine.setAttribute('x2', worldPos.x);
-          currentLine.setAttribute('y2', worldPos.y);
-          currentLine.setAttribute('stroke', '#FFD700');
-          currentLine.setAttribute('stroke-width', 2 * strokeScale);
-          currentLine.setAttribute('stroke-linecap', 'round');
-          currentLine.setAttribute('class', 'preview-line');
-          world.appendChild(currentLine);
-        }
+  for (const marker of markers) {
+    const variant = marker.variant || 'available';
+    const cls = `axiom-marker axiom-marker-${marker.kind} ${variant}`;
+    const radius = (variant === 'available' ? 1.4 : 2.2) * strokeScale;
+
+    if (marker.kind === 'point') {
+      const dot = document.createElementNS(SVG_NS, 'circle');
+      dot.setAttribute('cx', marker.x);
+      dot.setAttribute('cy', marker.y);
+      dot.setAttribute('r', radius);
+      dot.setAttribute('class', cls);
+      if (marker.id) dot.setAttribute('data-entity-id', marker.id);
+      if (marker.coordKey) dot.setAttribute('data-coord-key', marker.coordKey);
+      layer.appendChild(dot);
+
+      if (marker.label) {
+        layer.appendChild(makeMarkerLabel(marker.label, marker.x + 3 * strokeScale, marker.y, strokeScale));
       }
-      e.stopPropagation();
-    }
-  };
+    } else {
+      const line = document.createElementNS(SVG_NS, 'line');
+      line.setAttribute('x1', marker.x1);
+      line.setAttribute('y1', marker.y1);
+      line.setAttribute('x2', marker.x2);
+      line.setAttribute('y2', marker.y2);
+      line.setAttribute('stroke-width', (variant === 'available' ? 1.2 : 2.4) * strokeScale);
+      // Dash patterns must scale with strokeScale like everything else here —
+      // a CSS-declared dasharray is in absolute user-space units, which for a
+      // small paper (e.g. a 1x1 square) makes a single dash longer than the
+      // whole line, so it visually stops partway instead of looking dashed.
+      const dash = MARKER_DASH[variant];
+      line.setAttribute('stroke-dasharray', dash ? dash.map(n => n * strokeScale).join(',') : 'none');
+      line.setAttribute('class', cls);
+      if (marker.id) line.setAttribute('data-entity-id', marker.id);
+      if (marker.coordKey) line.setAttribute('data-coord-key', marker.coordKey);
+      layer.appendChild(line);
 
-  const handleDrawMove = (e) => {
-    if (isDrawing && currentLine && startPos) {
-      const pos = screenToSvg(svg, e.clientX, e.clientY);
-      if (pos) {
-        const worldPos = svgToWorld(pos.x, pos.y);
-        currentLine.setAttribute('x2', worldPos.x);
-        currentLine.setAttribute('y2', worldPos.y);
+      if (marker.label) {
+        const midX = (marker.x1 + marker.x2) / 2;
+        const midY = (marker.y1 + marker.y2) / 2;
+        layer.appendChild(makeMarkerLabel(marker.label, midX, midY, strokeScale));
       }
-      e.stopPropagation();
     }
-  };
-
-  const handleDrawEnd = (e) => {
-    if (isDrawing && currentLine) {
-      // Line is finalized, apply the selected crease type style
-      const style = EDGE_STYLE[selectedCreaseType] || EDGE_STYLE.U;
-      currentLine.setAttribute('stroke', style.stroke);
-      currentLine.setAttribute('stroke-width', style.width * strokeScale);
-      if (style.dash) {
-        const scaled = style.dash.split(',').map(n => parseFloat(n) * strokeScale).join(',');
-        currentLine.setAttribute('stroke-dasharray', scaled);
-      } else {
-        currentLine.removeAttribute('stroke-dasharray');
-      }
-      currentLine.removeAttribute('class');
-      currentLine.setAttribute('data-type', selectedCreaseType);
-
-      isDrawing = false;
-      startPos = null;
-      currentLine = null;
-    }
-    e.stopPropagation();
-  };
-
-  svg.addEventListener('pointerdown', handleDrawStart, true);
-  svg.addEventListener('pointermove', handleDrawMove, true);
-  svg.addEventListener('pointerup', handleDrawEnd, true);
-
-  svg._drawingHandlers = { handleDrawStart, handleDrawMove, handleDrawEnd };
-}
-
-export function disableDrawingMode(svg) {
-  drawingMode = false;
-  svg.style.cursor = 'default';
-  isDrawing = false;
-  currentLine = null;
-  startPos = null;
-
-  if (svg._drawingHandlers) {
-    const { handleDrawStart, handleDrawMove, handleDrawEnd } = svg._drawingHandlers;
-    svg.removeEventListener('pointerdown', handleDrawStart, true);
-    svg.removeEventListener('pointermove', handleDrawMove, true);
-    svg.removeEventListener('pointerup', handleDrawEnd, true);
-    delete svg._drawingHandlers;
   }
 }
 
-export function enablePointMode(svg) {
-  pointMode = true;
-  if (svg._pointModeHandler) return;
-
-  const handlePoint = (e) => {
-    if (!pointMode || !e.isPrimary) return;
-    const pos = screenToSvg(svg, e.clientX, e.clientY);
-    if (!pos) return;
-
-    const worldPos = svgToWorld(pos.x, pos.y);
-    const world = svg.querySelector('g');
-    if (!world) return;
-
-    const s = state.get(svg);
-    const radius = (s?.strokeScale || 1) * 1.1;
-    const dot = document.createElementNS(SVG_NS, 'circle');
-    dot.setAttribute('cx', worldPos.x);
-    dot.setAttribute('cy', worldPos.y);
-    dot.setAttribute('r', radius);
-    dot.setAttribute('data-point', '1');
-    dot.setAttribute('class', 'free-point');
-    world.appendChild(dot);
-
-    e.preventDefault();
-    if (typeof e.stopImmediatePropagation === 'function') {
-      e.stopImmediatePropagation();
-    }
-    e.stopPropagation();
-  };
-
-  svg.addEventListener('pointerdown', handlePoint, true);
-  svg._pointModeHandler = handlePoint;
+function makeMarkerLabel(text, x, y, strokeScale) {
+  const label = document.createElementNS(SVG_NS, 'text');
+  label.setAttribute('class', 'axiom-marker-label');
+  label.setAttribute('transform', `translate(${x}, ${y}) scale(1, -1)`);
+  label.setAttribute('font-size', 3.2 * strokeScale);
+  label.textContent = text;
+  return label;
 }
 
-export function disablePointMode(svg) {
-  pointMode = false;
-  if (svg._pointModeHandler) {
-    svg.removeEventListener('pointerdown', svg._pointModeHandler, true);
-    delete svg._pointModeHandler;
-  }
+export function clearAxiomMarkers(svg) {
+  const world = svg.querySelector('g');
+  if (!world) return;
+  world.querySelectorAll('.axiom-marker-layer').forEach(n => n.remove());
 }
 
 export function attachPanZoom2d(svg) {
@@ -589,7 +324,7 @@ export function attachPanZoom2d(svg) {
   let last = { x: 0, y: 0 };
 
   const handlePointerDown = (e) => {
-    if (drawingMode || pointMode) return;
+    if (entityPickMode) return;
     dragging = true;
     last = { x: e.clientX, y: e.clientY };
     svg.setPointerCapture(e.pointerId);
@@ -614,7 +349,7 @@ export function attachPanZoom2d(svg) {
   };
 
   const handleWheel = (e) => {
-    if (drawingMode || pointMode) return;
+    if (entityPickMode) return;
     const s = state.get(svg);
     if (!s) return;
     e.preventDefault();
@@ -643,4 +378,3 @@ export function attachPanZoom2d(svg) {
 function applyViewBox(svg, vb) {
   svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
 }
-

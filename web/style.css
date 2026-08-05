@@ -185,53 +185,6 @@ button.ghost.active-mode {
   color: var(--mountain);
 }
 
-/* Edit mode panel */
-#edit-mode-panel {
-  margin-top: 0.5rem;
-  padding: 0.75rem;
-  background: rgba(0, 0, 0, 0.02);
-  border: 1px solid var(--pencil-light);
-}
-
-.edit-actions {
-  margin-top: 0.6rem;
-  display: grid;
-  gap: 0.35rem;
-}
-
-.edit-actions .ghost {
-  padding-left: 0.5rem;
-}
-
-.edit-subtitle {
-  font-family: var(--font-mono);
-  font-size: 0.62rem;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--pencil);
-  margin-bottom: 0.5rem;
-  font-weight: 500;
-}
-
-.type-selector {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.35rem;
-}
-
-.type-dropdown {
-  padding: 0.4rem 0.5rem;
-  background: transparent;
-  border: 1px solid var(--pencil-light);
-  font-family: inherit;
-  font-size: 0.65rem;
-  color: var(--ink-soft);
-  cursor: pointer;
-  transition: all 120ms;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-
 .type-btn {
   padding: 0.4rem 0.5rem;
   background: transparent;
@@ -254,27 +207,6 @@ button.ghost.active-mode {
   background: var(--ink);
   color: var(--paper);
   border-color: var(--ink);
-}
-
-.type-btn[data-type="M"].active {
-  background: var(--mountain);
-  border-color: var(--mountain);
-}
-
-.type-btn[data-type="V"].active {
-  background: var(--valley);
-  border-color: var(--valley);
-}
-
-.type-btn[data-type="B"].active {
-  background: var(--ink);
-  border-color: var(--ink);
-}
-
-.type-btn[data-type="F"].active {
-  background: var(--flat);
-  border-color: var(--flat);
-  color: var(--ink);
 }
 
 /* View-mode toggle */
@@ -495,10 +427,249 @@ button.ghost.active-mode {
   color: var(--ink-soft);
 }
 
-/* Free points visual treatment */
-.free-point {
-  fill: var(--ink);
+/* =============================================================================
+   Huzita axiom panel
+   ============================================================================= */
+
+.axiom-selector {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+}
+
+.axiom-btn.active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+.axiom-desc {
+  font-size: 0.68rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin-bottom: 0.75rem;
+}
+
+.axiom-slots {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.axiom-slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--pencil-light);
+  background: rgba(0, 0, 0, 0.015);
+}
+
+.axiom-slot.filled {
+  border-color: var(--ink-soft);
+}
+
+.axiom-slot.picking {
+  border-color: var(--mountain);
+  color: var(--mountain);
+}
+
+.axiom-slot-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.axiom-slot-value {
+  font-size: 0.62rem;
+  color: var(--pencil);
+  flex: 1;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.axiom-slot-pick {
+  flex-shrink: 0;
+  padding: 0.3rem 0.55rem;
+  background: transparent;
+  border: 1px solid var(--pencil-light);
+  font-family: inherit;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 120ms;
+}
+
+.axiom-slot-pick:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.axiom-slot-pick.active-mode {
+  background: var(--mountain);
+  border-color: var(--mountain);
+  color: var(--paper);
+}
+
+/* =============================================================================
+   Construction stack
+   ============================================================================= */
+
+.axiom-stack {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.axiom-stack li {
+  padding: 0.5rem 0.65rem;
+  border-left: 2px solid var(--rule);
+  background: rgba(0, 0, 0, 0.015);
+  font-size: 0.68rem;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+
+.axiom-stack li:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: var(--ink);
+}
+
+.axiom-stack li.empty {
+  color: var(--pencil);
+  cursor: default;
+  font-style: italic;
+}
+
+.axiom-stack li.empty:hover {
+  background: rgba(0, 0, 0, 0.015);
+  border-color: var(--rule);
+}
+
+.axiom-stack .stack-index {
+  color: var(--pencil);
+  margin-right: 0.35rem;
+}
+
+.axiom-stack .stack-params {
+  display: block;
+  color: var(--pencil);
+  font-size: 0.62rem;
+}
+
+.stack-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+}
+
+.stack-actions .ghost {
+  text-align: center;
+}
+
+.lean-preview {
+  margin-top: 0.6rem;
+  border: 1px solid var(--pencil-light);
+}
+
+.lean-preview summary {
+  padding: 0.5rem 0.65rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.lean-preview pre {
+  margin: 0;
+  padding: 0.65rem;
+  border-top: 1px solid var(--pencil-light);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+  color: var(--ink-soft);
+}
+
+/* =============================================================================
+   Axiom entity markers (drawn on the SVG canvas)
+   ============================================================================= */
+
+.axiom-marker {
+  pointer-events: none;
+}
+
+/* Available: every point/line the construction has unlocked so far — the
+   growing pool the Huzita panel picks from, always shown faint. */
+.axiom-marker-point.available {
+  fill: var(--pencil);
+  stroke: var(--paper);
+  stroke-width: 0.3;
+  opacity: 0.7;
+}
+
+.axiom-marker-line.available {
+  stroke: var(--pencil);
+  stroke-linecap: round;
+  opacity: 0.55;
+  /* stroke-dasharray is set per-element in render2d.js, scaled to the
+     pattern's own coordinate space — a fixed CSS value would be in absolute
+     user-space units, wildly wrong for a small paper (see git history). */
+}
+
+/* Selected: entities already picked for the axiom currently being built. */
+.axiom-marker-point.selected {
+  fill: var(--mountain);
+  stroke: var(--paper);
+  stroke-width: 0.4;
+}
+
+.axiom-marker-line.selected {
+  stroke: var(--mountain);
+  stroke-linecap: round;
+}
+
+/* Candidate: one or more possible fold results awaiting confirmation —
+   click one when there's more than one. */
+.axiom-marker-point.candidate,
+.axiom-marker-line.candidate {
+  stroke: #B8860B;
+  fill: #B8860B;
+  stroke-linecap: round;
+  /* stroke-dasharray is set per-element in render2d.js — see .available above. */
+}
+
+.axiom-marker-label {
+  font-family: var(--font-mono);
+  fill: var(--pencil);
+  pointer-events: none;
   opacity: 0.85;
+}
+
+.axiom-marker.pulse {
+  animation: axiom-pulse 900ms ease-in-out 2;
+}
+
+@keyframes axiom-pulse {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 0.25; }
 }
 
 /* =============================================================================

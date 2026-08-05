@@ -12,8 +12,7 @@
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
-    "rabbit-ear": "https://cdn.jsdelivr.net/npm/rabbit-ear@0.9.4/+esm"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
   }
 }
 </script>
@@ -35,26 +34,42 @@
       <h2>Source</h2>
       <label class="upload" for="file-input">Upload .fold file</label>
       <input type="file" id="file-input" accept=".fold,.json,application/json" hidden>
-      <button id="edit-crease-mode" class="ghost">Edit Pattern</button>
-      <div id="edit-mode-panel" hidden>
-        <h3 class="edit-subtitle">Crease Type</h3>
-        <div class="type-selector">
-          <button data-type="M" class="type-btn" title="Mountain">Mountain</button>
-          <button data-type="V" class="type-btn" title="Valley">Valley</button>
-          <button data-type="B" class="type-btn" title="Border">Border</button>
-          <button data-type="F" class="type-btn" title="Flat">Flat</button>
-          <button data-type="U" class="type-btn active" title="Unassigned">Unassigned</button>
-        </div>
-        <div class="edit-actions">
-          <button id="add-point" class="ghost">Add point</button>
-          <button id="reset-unit" class="ghost">Reset unit square</button>
-        </div>
-      </div>
-      <button id="export" class="ghost">Export to Fold</button>
-      <button id="run-lean" class="ghost">Run Lean Check</button>
-      <div class="status-note" id="lean-note" hidden></div>
       <div class="success-note" id="success-note" hidden></div>
       <div class="error-note" id="error-note" hidden></div>
+    </section>
+
+    <section class="panel" id="huzita-panel">
+      <h2>Huzita Axioms</h2>
+      <div class="axiom-selector" id="axiom-selector">
+        <button data-axiom="1" class="type-btn axiom-btn">A1</button>
+        <button data-axiom="2" class="type-btn axiom-btn">A2</button>
+        <button data-axiom="3" class="type-btn axiom-btn">A3</button>
+        <button data-axiom="4" class="type-btn axiom-btn">A4</button>
+        <button data-axiom="5" class="type-btn axiom-btn">A5</button>
+        <button data-axiom="6" class="type-btn axiom-btn">A6</button>
+        <button data-axiom="7" class="type-btn axiom-btn">A7</button>
+      </div>
+      <p class="axiom-desc" id="axiom-desc">Select an axiom to begin stacking a fold.</p>
+      <div class="axiom-slots" id="axiom-slots"></div>
+      <button id="add-axiom-btn" class="ghost" disabled>Add to stack</button>
+      <div class="status-note" id="axiom-note" hidden></div>
+    </section>
+
+    <section class="panel" id="stack-panel">
+      <h2>Construction Stack</h2>
+      <ol class="axiom-stack" id="axiom-stack-list">
+        <li class="empty">No axioms stacked yet.</li>
+      </ol>
+      <div class="stack-actions">
+        <button id="undo-axiom-btn" class="ghost" disabled>Undo last</button>
+        <button id="clear-stack-btn" class="ghost" disabled>Clear stack</button>
+      </div>
+      <button id="build-lean-btn" class="ghost" disabled>Build Lean sequence</button>
+      <div class="status-note" id="build-note" hidden></div>
+      <details class="lean-preview" id="lean-preview-wrap" hidden>
+        <summary>Generated Lean preview</summary>
+        <pre id="lean-preview"></pre>
+      </details>
     </section>
 
     <section class="panel">
