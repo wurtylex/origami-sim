@@ -16,6 +16,8 @@
   --mountain:     #B8352C;
   --valley:       #2C4B8C;
   --flat:         #C4BDB0;
+  --available:    #1F7A6C;
+  --candidate:    #B8860B;
 
   --font-display: 'Cormorant Garamond', 'Georgia', serif;
   --font-mono:    'IBM Plex Mono', ui-monospace, monospace;
@@ -617,28 +619,56 @@ button.ghost.active-mode {
 }
 
 /* Available: every point/line the construction has unlocked so far — the
-   growing pool the Huzita panel picks from, always shown faint. */
+   growing pool the Huzita panel picks from. Uses its own ink color (teal)
+   rather than pencil-grey so it reads as "pickable" instead of blending
+   into the ordinary mountain/valley/border/flat geometry underneath. */
 .axiom-marker-point.available {
-  fill: var(--pencil);
-  stroke: var(--paper);
-  stroke-width: 0.3;
-  opacity: 0.7;
+  fill: var(--available);
+  opacity: 0.85;
 }
 
 .axiom-marker-line.available {
-  stroke: var(--pencil);
+  stroke: var(--available);
   stroke-linecap: round;
-  opacity: 0.55;
+  opacity: 0.75;
   /* stroke-dasharray is set per-element in render2d.js, scaled to the
      pattern's own coordinate space — a fixed CSS value would be in absolute
      user-space units, wildly wrong for a small paper (see git history). */
 }
 
-/* Selected: entities already picked for the axiom currently being built. */
+/* Dimmed further while a pick is in progress for the *other* entity kind
+   (e.g. picking a point while lines are also on screen) — keeps attention
+   on what's actually clickable right now. */
+.axiom-marker-point.available-dim,
+.axiom-marker-line.available-dim {
+  opacity: 0.22;
+}
+
+/* The entity kind currently being picked — brighter than the resting
+   "available" state and gently pulsing so it's unmistakable where to click. */
+.axiom-marker-point.available-active {
+  fill: var(--available);
+  opacity: 1;
+  animation: axiom-breathe 1300ms ease-in-out infinite;
+}
+
+.axiom-marker-line.available-active {
+  stroke: var(--available);
+  stroke-linecap: round;
+  opacity: 1;
+  animation: axiom-breathe 1300ms ease-in-out infinite;
+}
+
+@keyframes axiom-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Selected: entities already picked for the axiom currently being built —
+   sized and haloed well above the ordinary geometry so the current
+   selection stays legible against the paper background. */
 .axiom-marker-point.selected {
   fill: var(--mountain);
-  stroke: var(--paper);
-  stroke-width: 0.4;
 }
 
 .axiom-marker-line.selected {
@@ -650,8 +680,8 @@ button.ghost.active-mode {
    click one when there's more than one. */
 .axiom-marker-point.candidate,
 .axiom-marker-line.candidate {
-  stroke: #B8860B;
-  fill: #B8860B;
+  stroke: var(--candidate);
+  fill: var(--candidate);
   stroke-linecap: round;
   /* stroke-dasharray is set per-element in render2d.js — see .available above. */
 }

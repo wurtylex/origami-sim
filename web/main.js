@@ -110,6 +110,8 @@ const themes = {
     '--mountain':     '#B8352C',
     '--valley':       '#2C4B8C',
     '--flat':         '#18140F',
+    '--available':    '#5FD3B9',
+    '--candidate':    '#E0B24D',
   },
   lf: {
     '--paper':        '#33415c',
@@ -122,6 +124,8 @@ const themes = {
     '--mountain':     '#B8352C',
     '--valley':       '#2C4B8C',
     '--flat':         '#a9d6e5',
+    '--available':    '#4FD1C5',
+    '--candidate':    '#E0B24D',
   },
   al: {
     '--paper':        '#F2EDE1',
@@ -134,6 +138,8 @@ const themes = {
     '--mountain':     '#B8352C',
     '--valley':       '#2C4B8C',
     '--flat':         '#C4BDB0',
+    '--available':    '#1F7A6C',
+    '--candidate':    '#B8860B',
   }
 };
 
@@ -578,6 +584,7 @@ function startPickingSlot(name, kind) {
   candidateSolutions = [];
   chosenSolution = null;
   renderAxiomSlots();
+  refreshAxiomMarkers();
   setAxiomNote(`Click on the canvas to pick ${name} (${kind}).`);
 
   enableEntityPickMode(
@@ -744,11 +751,20 @@ function refreshAxiomMarkers() {
   if (!el.svg || mode !== 'cp') return;
   const markers = [];
 
+  // While actively picking a slot, brighten the entity kind that's
+  // clickable right now and dim the other one out of the way, instead of
+  // showing the whole available pool at one flat visual weight.
+  const pickingKind = (pickingSlotName && selectedAxiomType)
+    ? AXIOMS[selectedAxiomType].slots.find(s => s.name === pickingSlotName)?.kind
+    : null;
+
   for (const p of availablePoints) {
-    markers.push({ kind: 'point', x: p.x, y: p.y, variant: 'available', label: p.id, coordKey: coordKey(p) });
+    const variant = !pickingKind ? 'available' : pickingKind === 'point' ? 'available-active' : 'available-dim';
+    markers.push({ kind: 'point', x: p.x, y: p.y, variant, label: p.id, coordKey: coordKey(p) });
   }
   for (const l of availableLines) {
-    markers.push({ kind: 'line', x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, variant: 'available', label: l.id, coordKey: coordKey(l) });
+    const variant = !pickingKind ? 'available' : pickingKind === 'line' ? 'available-active' : 'available-dim';
+    markers.push({ kind: 'line', x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, variant, label: l.id, coordKey: coordKey(l) });
   }
 
   if (selectedAxiomType) {

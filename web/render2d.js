@@ -245,7 +245,30 @@ export function disableEntityPickMode(svg) {
 // above — scaled by strokeScale before being applied, never used raw.
 const MARKER_DASH = {
   available: [2, 2.4],
+  'available-dim': [2, 2.4],
+  'available-active': [2.6, 1.6],
   candidate: [4, 2.5],
+};
+
+// Point radius / line width per variant, in world-relative units (scaled by
+// strokeScale below). 'selected' and 'candidate' are drawn noticeably larger
+// than the resting 'available' pool so the current pick stays legible
+// against the paper background. Points are sized well above line width so
+// they stay easy to click/see without the lines getting comically thick.
+const POINT_SIZE = {
+  available: 3.4,
+  'available-dim': 3.4,
+  'available-active': 4.2,
+  selected: 5.2,
+  candidate: 5.2,
+};
+
+const LINE_SIZE = {
+  available: 1.8,
+  'available-dim': 1.8,
+  'available-active': 2.2,
+  selected: 2.8,
+  candidate: 2.8,
 };
 
 export function drawAxiomMarkers(svg, markers) {
@@ -262,13 +285,13 @@ export function drawAxiomMarkers(svg, markers) {
   for (const marker of markers) {
     const variant = marker.variant || 'available';
     const cls = `axiom-marker axiom-marker-${marker.kind} ${variant}`;
-    const radius = (variant === 'available' ? 1.4 : 2.2) * strokeScale;
 
     if (marker.kind === 'point') {
+      const size = (POINT_SIZE[variant] ?? 3.4) * strokeScale;
       const dot = document.createElementNS(SVG_NS, 'circle');
       dot.setAttribute('cx', marker.x);
       dot.setAttribute('cy', marker.y);
-      dot.setAttribute('r', radius);
+      dot.setAttribute('r', size);
       dot.setAttribute('class', cls);
       if (marker.id) dot.setAttribute('data-entity-id', marker.id);
       if (marker.coordKey) dot.setAttribute('data-coord-key', marker.coordKey);
@@ -278,12 +301,13 @@ export function drawAxiomMarkers(svg, markers) {
         layer.appendChild(makeMarkerLabel(marker.label, marker.x + 3 * strokeScale, marker.y, strokeScale));
       }
     } else {
+      const size = (LINE_SIZE[variant] ?? 1.8) * strokeScale;
       const line = document.createElementNS(SVG_NS, 'line');
       line.setAttribute('x1', marker.x1);
       line.setAttribute('y1', marker.y1);
       line.setAttribute('x2', marker.x2);
       line.setAttribute('y2', marker.y2);
-      line.setAttribute('stroke-width', (variant === 'available' ? 1.2 : 2.4) * strokeScale);
+      line.setAttribute('stroke-width', size);
       // Dash patterns must scale with strokeScale like everything else here —
       // a CSS-declared dasharray is in absolute user-space units, which for a
       // small paper (e.g. a 1x1 square) makes a single dash longer than the
