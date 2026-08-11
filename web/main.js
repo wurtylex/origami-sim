@@ -410,7 +410,28 @@ function addAvailablePoint(x, y) {
   return { id: p.id, isNew: true };
 }
 
+// Pure: what a fold along `solution` would make newly available, without
+// touching any state -- this is what gets reported to the server so it can
+// track (and later un-declare) exactly what a given axiom created.
+function computeProducedGeometry(solution) {
+  const points = [];
+  for (const existing of availableLines) {
+    const ix = Geo.intersectLines(solution, existing);
+    if (!ix) continue;
+    if (!Geo.pointOnSegment(ix, solution) || !Geo.pointOnSegment(ix, existing)) continue;
+    if (availablePoints.some(p => Geo.pointsEqual(p, ix))) continue;
+    if (points.some(p => Geo.pointsEqual(p, ix))) continue;
+    points.push({ x: ix.x, y: ix.y });
+  }
+  return {
+    line: { x1: solution.x1, y1: solution.y1, x2: solution.x2, y2: solution.y2 },
+    points,
+  };
+}
+
 function commitSolutionToGeometry(solution) {
+  const produced = computeProducedGeometry(solution);
+
   lineCounter += 1;
   const newLine = {
     kind: 'line', id: `L${lineCounter}`,
@@ -419,11 +440,8 @@ function commitSolutionToGeometry(solution) {
   };
 
   const addedPointIds = [];
-  for (const existing of availableLines) {
-    const ix = Geo.intersectLines(newLine, existing);
-    if (!ix) continue;
-    if (!Geo.pointOnSegment(ix, newLine) || !Geo.pointOnSegment(ix, existing)) continue;
-    const { id, isNew } = addAvailablePoint(ix.x, ix.y);
+  for (const pt of produced.points) {
+    const { id, isNew } = addAvailablePoint(pt.x, pt.y);
     if (isNew) addedPointIds.push(id);
   }
 
@@ -666,12 +684,14 @@ async function addAxiomToStack() {
     params[slot.name] = axiomSlotValues[slot.name];
   }
 
+  const produced = computeProducedGeometry(chosenSolution);
+
   el.addAxiomBtn.disabled = true;
   try {
     const res = await fetch('./add-axiom', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: selectedAxiomType, params }),
+      body: JSON.stringify({ type: selectedAxiomType, params, produced }),
     });
     if (!res.ok) {
       const text = await res.text();
