@@ -22,6 +22,7 @@ import init, { FoldDocument } from './pkg/origami.js';
 import { render2d, attachPanZoom2d, enableEntityPickMode, disableEntityPickMode, drawAxiomMarkers } from './render2d.js';
 import { create3dRenderer } from './render3d.js';
 import * as Geo from './geometry.js';
+import * as FoldMesh from './foldmesh.js';
 
 // -----------------------------------------------------------------------------
 // Huzita axiom definitions — mirrors OrigamiAPI.AXIOM_REQUIREMENTS in origami_api.py
@@ -72,6 +73,7 @@ const el = {
   stackList:     document.getElementById('axiom-stack-list'),
   undoAxiomBtn:  document.getElementById('undo-axiom-btn'),
   clearStackBtn: document.getElementById('clear-stack-btn'),
+  foldDirToggle: document.getElementById('fold-direction-toggle'),
   buildLeanBtn:  document.getElementById('build-lean-btn'),
   buildNote:     document.getElementById('build-note'),
   leanPreviewWrap: document.getElementById('lean-preview-wrap'),
@@ -148,6 +150,9 @@ const themes = {
 // -----------------------------------------------------------------------------
 
 let doc = null;
+let originalFoldText = null; // raw .fold text `doc` was last freshly built from, for "Clear stack"
+let creasePattern = null;    // editable FOLD mesh (vertices/faces/edge kinds) `doc` is rebuilt from
+let foldDirection = 'V';     // 'M' | 'V' — assignment given to the next stacked axiom's crease
 let mode = 'cp';        // 'cp' | '3d'
 let foldT = 1.0;
 let renderer3d = null;  // lazily created
@@ -310,7 +315,10 @@ async function loadFile(file, { resetStack = false } = {}) {
   try {
     const text = await file.text();
     doc = new FoldDocument(text);
-    seedGeometry(JSON.parse(doc.renderJson('cp')));
+    originalFoldText = text;
+    const data = JSON.parse(doc.renderJson('cp'));
+    seedGeometry(data);
+    creasePattern = FoldMesh.fromRenderData(data);
     resetAxiomSelection();
     render();
 
@@ -429,7 +437,7 @@ function computeProducedGeometry(solution) {
   };
 }
 
-function commitSolutionToGeometry(solution) {
+function commitSolutionToGeometry(solution, assignment = 'V') {
   const produced = computeProducedGeometry(solution);
 
   lineCounter += 1;
@@ -446,7 +454,21 @@ function commitSolutionToGeometry(solution) {
   }
 
   availableLines.push(newLine);
-  geometryHistory.push({ lineId: newLine.id, addedPointIds });
+
+  // Cut the fold into the real FOLD mesh too, so it becomes an actual crease
+  // the WASM FoldDocument can fold — not just a pick-geometry overlay line.
+  // addCrease() doesn't mutate `creasePattern` in place, so the pre-update
+  // doc/mesh pair is cheap to keep around for undo.
+  const prevDoc = doc;
+  const prevPattern = creasePattern;
+  const updated = FoldMesh.addCrease(creasePattern, solution, assignment);
+  const docRebuilt = updated !== creasePattern;
+  if (docRebuilt) {
+    creasePattern = updated;
+    doc = new FoldDocument(JSON.stringify(FoldMesh.toFoldJson(creasePattern, { title: doc.title })));
+  }
+
+  geometryHistory.push({ lineId: newLine.id, addedPointIds, prevDoc, prevPattern, docRebuilt });
 }
 
 function undoLastGeometry() {
@@ -454,6 +476,10 @@ function undoLastGeometry() {
   if (!entry) return;
   availableLines = availableLines.filter(l => l.id !== entry.lineId);
   availablePoints = availablePoints.filter(p => !entry.addedPointIds.includes(p.id));
+  if (entry.docRebuilt) {
+    doc = entry.prevDoc;
+    creasePattern = entry.prevPattern;
+  }
 }
 
 // Best-effort reconstruction after a page reload: the server keeps the axiom
@@ -698,7 +724,7 @@ async function addAxiomToStack() {
       throw new Error(text || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    commitSolutionToGeometry(chosenSolution);
+    commitSolutionToGeometry(chosenSolution, foldDirection);
     applyStack(data.stack);
     setAxiomNote(`Axiom ${selectedAxiomType} added as step #${data.axiom.index}.`, 'success');
 
@@ -707,6 +733,7 @@ async function addAxiomToStack() {
     chosenSolution = null;
     renderAxiomSlots();
     refreshAxiomMarkers();
+    render();
   } catch (err) {
     setAxiomNote(`Could not add axiom: ${err.message || err}`, 'error');
     updateAddAxiomButtonState();
@@ -810,6 +837,13 @@ function setupHuzitaPanel() {
     btn.addEventListener('click', () => selectAxiom(Number(btn.dataset.axiom)));
   });
   el.addAxiomBtn.addEventListener('click', addAxiomToStack);
+
+  el.foldDirToggle.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      foldDirection = btn.dataset.dir;
+      el.foldDirToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
 }
 
 function stopBuildPolling() {
@@ -876,6 +910,7 @@ function setupStackPanel() {
       if (data.status === 'undone') undoLastGeometry();
       applyStack(data.stack);
       refreshAxiomMarkers();
+      render();
     } catch (err) {
       setBuildNote(`Undo failed: ${err.message || err}`, 'error');
     }
@@ -888,9 +923,18 @@ function setupStackPanel() {
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       applyStack(data.stack);
-      if (doc) seedGeometry(JSON.parse(doc.renderJson('cp')));
+      // Stacked axioms rebuilt `doc` from the mesh — reload it fresh from
+      // the original file so cleared creases actually disappear.
+      if (originalFoldText) doc = new FoldDocument(originalFoldText);
+      if (doc) {
+        const freshData = JSON.parse(doc.renderJson('cp'));
+        seedGeometry(freshData);
+        creasePattern = FoldMesh.fromRenderData(freshData);
+      }
+      geometryHistory = [];
       resetAxiomSelection();
       refreshAxiomMarkers();
+      render();
       setBuildNote('');
     } catch (err) {
       setBuildNote(`Clear failed: ${err.message || err}`, 'error');
@@ -908,6 +952,7 @@ async function loadStack() {
     applyStack(data);
     if (paperBounds) replayStackIntoGeometry(data);
     refreshAxiomMarkers();
+    render();
   } catch (err) {
     console.warn('Could not load axiom stack:', err);
   }
