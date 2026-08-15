@@ -55,7 +55,10 @@
         <button type="button" data-dir="V" class="active">Valley</button>
         <button type="button" data-dir="M">Mountain</button>
       </div>
-      <button id="add-axiom-btn" class="ghost" disabled>Add to stack</button>
+      <div class="stack-actions">
+        <button id="add-axiom-btn" class="ghost" disabled>Add to stack</button>
+        <button id="add-reference-btn" class="ghost" disabled>Add as reference</button>
+      </div>
       <div class="status-note" id="axiom-note" hidden></div>
     </section>
 
@@ -74,6 +77,14 @@
         <summary>Generated Lean preview</summary>
         <pre id="lean-preview"></pre>
       </details>
+    </section>
+
+    <section class="panel" id="reference-panel">
+      <h2>Reference Creases</h2>
+      <p class="axiom-desc">Folds whose points are pickable in later folds, but that are never added to the Lean construction or the physical model.</p>
+      <ol class="axiom-stack" id="reference-list">
+        <li class="empty">No reference creases yet.</li>
+      </ol>
     </section>
 
     <section class="panel">

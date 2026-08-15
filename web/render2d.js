@@ -237,7 +237,7 @@ export function disableEntityPickMode(svg) {
 //  - the ones selected for the axiom currently being built
 //  - candidate fold solutions awaiting disambiguation (axioms with >1 fold)
 // Redrawn after every render() call and every geometry update.
-// marker.variant: 'available' | 'selected' | 'candidate'
+// marker.variant: 'available' | 'reference' | 'selected' | 'candidate'
 // marker.coordKey: opaque string used to pulse-highlight from the stack list
 // -----------------------------------------------------------------------------
 
@@ -248,6 +248,7 @@ const MARKER_DASH = {
   'available-dim': [2, 2.4],
   'available-active': [2.6, 1.6],
   candidate: [4, 2.5],
+  reference: [1, 3],
 };
 
 // Point radius / line width per variant, in world-relative units (scaled by
@@ -269,6 +270,7 @@ const LINE_SIZE = {
   'available-active': 2.2,
   selected: 2.8,
   candidate: 2.8,
+  reference: 1.8,
 };
 
 export function drawAxiomMarkers(svg, markers) {
