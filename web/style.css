@@ -18,6 +18,7 @@
   --flat:         #C4BDB0;
   --available:    #1F7A6C;
   --candidate:    #B8860B;
+  --reference:    #6B5B95;
 
   --font-display: 'Cormorant Garamond', 'Georgia', serif;
   --font-mono:    'IBM Plex Mono', ui-monospace, monospace;
@@ -634,6 +635,15 @@ button.ghost.active-mode {
   /* stroke-dasharray is set per-element in render2d.js, scaled to the
      pattern's own coordinate space — a fixed CSS value would be in absolute
      user-space units, wildly wrong for a small paper (see git history). */
+}
+
+/* Reference: a fold whose line/points are pickable but that was never added
+   to the construction stack — no physical crease, invisible to Lean. Its
+   own color keeps it from reading as "just another available line". */
+.axiom-marker-line.reference {
+  stroke: var(--reference);
+  stroke-linecap: round;
+  opacity: 0.75;
 }
 
 /* Dimmed further while a pick is in progress for the *other* entity kind

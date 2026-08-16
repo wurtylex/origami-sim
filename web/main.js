@@ -22,6 +22,7 @@ import init, { FoldDocument } from './pkg/origami.js';
 import { render2d, attachPanZoom2d, enableEntityPickMode, disableEntityPickMode, drawAxiomMarkers } from './render2d.js';
 import { create3dRenderer } from './render3d.js';
 import * as Geo from './geometry.js';
+import * as FoldMesh from './foldmesh.js';
 
 // -----------------------------------------------------------------------------
 // Huzita axiom definitions — mirrors OrigamiAPI.AXIOM_REQUIREMENTS in origami_api.py
@@ -68,10 +69,13 @@ const el = {
   axiomDesc:     document.getElementById('axiom-desc'),
   axiomSlots:    document.getElementById('axiom-slots'),
   addAxiomBtn:   document.getElementById('add-axiom-btn'),
+  addReferenceBtn: document.getElementById('add-reference-btn'),
   axiomNote:     document.getElementById('axiom-note'),
   stackList:     document.getElementById('axiom-stack-list'),
+  referenceList: document.getElementById('reference-list'),
   undoAxiomBtn:  document.getElementById('undo-axiom-btn'),
   clearStackBtn: document.getElementById('clear-stack-btn'),
+  foldDirToggle: document.getElementById('fold-direction-toggle'),
   buildLeanBtn:  document.getElementById('build-lean-btn'),
   buildNote:     document.getElementById('build-note'),
   leanPreviewWrap: document.getElementById('lean-preview-wrap'),
@@ -112,6 +116,7 @@ const themes = {
     '--flat':         '#18140F',
     '--available':    '#5FD3B9',
     '--candidate':    '#E0B24D',
+    '--reference':    '#B58FE0',
   },
   lf: {
     '--paper':        '#33415c',
@@ -126,6 +131,7 @@ const themes = {
     '--flat':         '#a9d6e5',
     '--available':    '#4FD1C5',
     '--candidate':    '#E0B24D',
+    '--reference':    '#B39DDB',
   },
   al: {
     '--paper':        '#F2EDE1',
@@ -140,6 +146,7 @@ const themes = {
     '--flat':         '#C4BDB0',
     '--available':    '#1F7A6C',
     '--candidate':    '#B8860B',
+    '--reference':    '#6B5B95',
   }
 };
 
@@ -148,6 +155,9 @@ const themes = {
 // -----------------------------------------------------------------------------
 
 let doc = null;
+let originalFoldText = null; // raw .fold text `doc` was last freshly built from, for "Clear stack"
+let creasePattern = null;    // editable FOLD mesh (vertices/faces/edge kinds) `doc` is rebuilt from
+let foldDirection = 'V';     // 'M' | 'V' — assignment given to the next stacked axiom's crease
 let mode = 'cp';        // 'cp' | '3d'
 let foldT = 1.0;
 let renderer3d = null;  // lazily created
@@ -160,6 +170,7 @@ let candidateSolutions = []; // computed fold lines for the in-progress axiom (0
 let chosenSolution = null;   // the candidate selected to commit on "Add to stack"
 let stackEntities = {};     // Lean identifier -> entity, from the server
 let stackAxioms = [];       // [{index, type, params}], from the server
+let stackReferences = [];   // [{index, type, params, produced}], from the server — never Lean-resolved
 let buildPollId = null;
 
 // Client-side construction geometry: what's actually available to pick from.
@@ -310,7 +321,10 @@ async function loadFile(file, { resetStack = false } = {}) {
   try {
     const text = await file.text();
     doc = new FoldDocument(text);
-    seedGeometry(JSON.parse(doc.renderJson('cp')));
+    originalFoldText = text;
+    const data = JSON.parse(doc.renderJson('cp'));
+    seedGeometry(data);
+    creasePattern = FoldMesh.fromRenderData(data);
     resetAxiomSelection();
     render();
 
@@ -429,7 +443,11 @@ function computeProducedGeometry(solution) {
   };
 }
 
-function commitSolutionToGeometry(solution) {
+// `isReference` folds only ever grow the pick-geometry pool below — they
+// never touch the FOLD mesh, so they show up nowhere in the crease pattern
+// or 3D view (and `assignment` is meaningless for them; the caller passes
+// whatever the fold-direction toggle currently reads, and it's ignored).
+function commitSolutionToGeometry(solution, assignment = 'V', isReference = false) {
   const produced = computeProducedGeometry(solution);
 
   lineCounter += 1;
@@ -437,6 +455,7 @@ function commitSolutionToGeometry(solution) {
     kind: 'line', id: `L${lineCounter}`,
     a: solution.a, b: solution.b, c: solution.c,
     x1: solution.x1, y1: solution.y1, x2: solution.x2, y2: solution.y2,
+    isReference,
   };
 
   const addedPointIds = [];
@@ -446,7 +465,25 @@ function commitSolutionToGeometry(solution) {
   }
 
   availableLines.push(newLine);
-  geometryHistory.push({ lineId: newLine.id, addedPointIds });
+
+  // Cut the fold into the real FOLD mesh too, so it becomes an actual crease
+  // the WASM FoldDocument can fold — not just a pick-geometry overlay line.
+  // addCrease() doesn't mutate `creasePattern` in place, so the pre-update
+  // doc/mesh pair is cheap to keep around for undo. Skipped entirely for
+  // reference creases: they're never a physical fold.
+  let prevDoc = doc;
+  let prevPattern = creasePattern;
+  let docRebuilt = false;
+  if (!isReference) {
+    const updated = FoldMesh.addCrease(creasePattern, solution, assignment);
+    docRebuilt = updated !== creasePattern;
+    if (docRebuilt) {
+      creasePattern = updated;
+      doc = new FoldDocument(JSON.stringify(FoldMesh.toFoldJson(creasePattern, { title: doc.title })));
+    }
+  }
+
+  geometryHistory.push({ lineId: newLine.id, addedPointIds, prevDoc, prevPattern, docRebuilt, isReference });
 }
 
 function undoLastGeometry() {
@@ -454,20 +491,30 @@ function undoLastGeometry() {
   if (!entry) return;
   availableLines = availableLines.filter(l => l.id !== entry.lineId);
   availablePoints = availablePoints.filter(p => !entry.addedPointIds.includes(p.id));
+  if (entry.docRebuilt) {
+    doc = entry.prevDoc;
+    creasePattern = entry.prevPattern;
+  }
 }
 
-// Best-effort reconstruction after a page reload: the server keeps the axiom
-// stack (identifiers + coordinates) but not which concrete fold a
-// multi-solution axiom resolved to, so ambiguous steps just take the first
-// valid candidate rather than leaving the canvas with nothing pickable.
-function replayStackIntoGeometry(stackData) {
-  for (const axiom of stackData.axioms) {
-    const entities = {};
-    for (const [slotName, id] of Object.entries(axiom.params)) {
-      entities[slotName] = stackData.entities[id];
-    }
-    const solver = AXIOM_SOLVER[axiom.type];
+// Best-effort reconstruction after a page reload: the server keeps the
+// stack + references (identifiers/raw params + coordinates) but not which
+// concrete fold a multi-solution axiom resolved to, so ambiguous steps just
+// take the first valid candidate rather than leaving the canvas with
+// nothing pickable. Replays `stackData.timeline` — axioms and references
+// merged and sorted by the server into true add-order — so a later real
+// axiom that depends on an earlier reference's point (or vice versa) still
+// resolves correctly, and the reconstructed `geometryHistory` (which drives
+// undo) ends up in the same order it was originally built in.
+function replayIntoGeometry(stackData) {
+  for (const entry of stackData.timeline) {
+    const solver = AXIOM_SOLVER[entry.type];
     if (!solver) continue;
+    const entities = entry.kind === 'reference'
+      ? entry.params
+      : Object.fromEntries(
+          Object.entries(entry.params).map(([slotName, id]) => [slotName, stackData.entities[id]]),
+        );
     const rawLines = solver(entities) || [];
     const clipped = rawLines
       .map(line => {
@@ -476,7 +523,7 @@ function replayStackIntoGeometry(stackData) {
       })
       .filter(Boolean);
     if (clipped.length === 0) continue;
-    commitSolutionToGeometry(clipped[0]);
+    commitSolutionToGeometry(clipped[0], 'V', entry.kind === 'reference');
   }
 }
 
@@ -582,7 +629,9 @@ function renderAxiomSlots() {
 
 function updateAddAxiomButtonState() {
   const slotsReady = !!selectedAxiomType && AXIOMS[selectedAxiomType].slots.every(s => axiomSlotValues[s.name]);
-  el.addAxiomBtn.disabled = !(slotsReady && chosenSolution);
+  const ready = slotsReady && !!chosenSolution;
+  el.addAxiomBtn.disabled = !ready;
+  el.addReferenceBtn.disabled = !ready;
 }
 
 function startPickingSlot(name, kind) {
@@ -698,7 +747,7 @@ async function addAxiomToStack() {
       throw new Error(text || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    commitSolutionToGeometry(chosenSolution);
+    commitSolutionToGeometry(chosenSolution, foldDirection);
     applyStack(data.stack);
     setAxiomNote(`Axiom ${selectedAxiomType} added as step #${data.axiom.index}.`, 'success');
 
@@ -707,8 +756,53 @@ async function addAxiomToStack() {
     chosenSolution = null;
     renderAxiomSlots();
     refreshAxiomMarkers();
+    render();
   } catch (err) {
     setAxiomNote(`Could not add axiom: ${err.message || err}`, 'error');
+    updateAddAxiomButtonState();
+  }
+}
+
+// Same fold-computation path as addAxiomToStack, but reported to
+// /add-reference instead of /add-axiom: the server never resolves its
+// entities to Lean identifiers, so it's invisible to the Lean preview, and
+// commitSolutionToGeometry(..., true) skips the FoldMesh/doc rebuild, so it
+// never becomes a physical crease. No render() call — nothing physical
+// changed, so the crease-pattern/3D view and stats panel are correctly left
+// untouched; refreshAxiomMarkers() alone is what surfaces the new pick
+// overlay (it rebuilds its own layer independent of the base draw).
+async function addReferenceCrease() {
+  if (!selectedAxiomType || !chosenSolution) return;
+  const params = {};
+  for (const slot of AXIOMS[selectedAxiomType].slots) {
+    params[slot.name] = axiomSlotValues[slot.name];
+  }
+
+  const produced = computeProducedGeometry(chosenSolution);
+
+  el.addReferenceBtn.disabled = true;
+  try {
+    const res = await fetch('./add-reference', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: selectedAxiomType, params, produced }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    commitSolutionToGeometry(chosenSolution, 'V', true);
+    applyStack(data.stack);
+    setAxiomNote(`Axiom ${selectedAxiomType} added as reference #${data.reference.index}.`, 'success');
+
+    for (const slot of AXIOMS[selectedAxiomType].slots) axiomSlotValues[slot.name] = null;
+    candidateSolutions = [];
+    chosenSolution = null;
+    renderAxiomSlots();
+    refreshAxiomMarkers();
+  } catch (err) {
+    setAxiomNote(`Could not add reference: ${err.message || err}`, 'error');
     updateAddAxiomButtonState();
   }
 }
@@ -716,12 +810,14 @@ async function addAxiomToStack() {
 function applyStack(stackData) {
   stackEntities = stackData.entities || {};
   stackAxioms = stackData.axioms || [];
+  stackReferences = stackData.references || [];
 
   renderStackList();
+  renderReferenceList();
   el.leanPreview.textContent = stackData.lean_preview || '';
   el.leanPreviewWrap.hidden = stackAxioms.length === 0;
-  el.undoAxiomBtn.disabled = stackAxioms.length === 0;
-  el.clearStackBtn.disabled = stackAxioms.length === 0;
+  el.undoAxiomBtn.disabled = stackAxioms.length === 0 && stackReferences.length === 0;
+  el.clearStackBtn.disabled = stackAxioms.length === 0 && stackReferences.length === 0;
   el.buildLeanBtn.disabled = stackAxioms.length === 0;
 }
 
@@ -755,6 +851,38 @@ function renderStackList() {
   }
 }
 
+// Reference params are raw entity dicts (never Lean-resolved), so format
+// them with formatEntity() directly instead of looking them up in
+// stackEntities like renderStackList does.
+function renderReferenceList() {
+  el.referenceList.innerHTML = '';
+  if (stackReferences.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'No reference creases yet.';
+    el.referenceList.appendChild(li);
+    return;
+  }
+  for (const ref of stackReferences) {
+    const keys = Object.values(ref.params).filter(Boolean).map(coordKey);
+    const paramsText = Object.entries(ref.params)
+      .map(([k, v]) => `${k}=${formatEntity(v)}`)
+      .join(', ');
+
+    const li = document.createElement('li');
+    const indexSpan = document.createElement('span');
+    indexSpan.className = 'stack-index';
+    indexSpan.textContent = `#${ref.index}`;
+    const paramsSpan = document.createElement('span');
+    paramsSpan.className = 'stack-params';
+    paramsSpan.textContent = paramsText;
+
+    li.append(indexSpan, `Axiom ${ref.type}`, paramsSpan);
+    li.addEventListener('click', () => pulseEntities(keys));
+    el.referenceList.appendChild(li);
+  }
+}
+
 function pulseEntities(keys) {
   const world = el.svg.querySelector('g');
   if (!world) return;
@@ -783,7 +911,9 @@ function refreshAxiomMarkers() {
     markers.push({ kind: 'point', x: p.x, y: p.y, variant, label: p.id, coordKey: coordKey(p) });
   }
   for (const l of availableLines) {
-    const variant = !pickingKind ? 'available' : pickingKind === 'line' ? 'available-active' : 'available-dim';
+    const variant = !pickingKind
+      ? (l.isReference ? 'reference' : 'available')
+      : pickingKind === 'line' ? 'available-active' : 'available-dim';
     markers.push({ kind: 'line', x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, variant, label: l.id, coordKey: coordKey(l) });
   }
 
@@ -810,6 +940,14 @@ function setupHuzitaPanel() {
     btn.addEventListener('click', () => selectAxiom(Number(btn.dataset.axiom)));
   });
   el.addAxiomBtn.addEventListener('click', addAxiomToStack);
+  el.addReferenceBtn.addEventListener('click', addReferenceCrease);
+
+  el.foldDirToggle.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      foldDirection = btn.dataset.dir;
+      el.foldDirToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
 }
 
 function stopBuildPolling() {
@@ -870,27 +1008,37 @@ async function buildLeanFromStack() {
 function setupStackPanel() {
   el.undoAxiomBtn.addEventListener('click', async () => {
     try {
-      const res = await fetch('./undo-axiom', { method: 'POST' });
+      const res = await fetch('./undo-last', { method: 'POST' });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       if (data.status === 'undone') undoLastGeometry();
       applyStack(data.stack);
       refreshAxiomMarkers();
+      render();
     } catch (err) {
       setBuildNote(`Undo failed: ${err.message || err}`, 'error');
     }
   });
 
   el.clearStackBtn.addEventListener('click', async () => {
-    if (!confirm('Clear the whole construction stack?')) return;
+    if (!confirm('Clear the whole construction stack, including reference creases?')) return;
     try {
       const res = await fetch('./clear-axioms', { method: 'POST' });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       applyStack(data.stack);
-      if (doc) seedGeometry(JSON.parse(doc.renderJson('cp')));
+      // Stacked axioms rebuilt `doc` from the mesh — reload it fresh from
+      // the original file so cleared creases actually disappear.
+      if (originalFoldText) doc = new FoldDocument(originalFoldText);
+      if (doc) {
+        const freshData = JSON.parse(doc.renderJson('cp'));
+        seedGeometry(freshData);
+        creasePattern = FoldMesh.fromRenderData(freshData);
+      }
+      geometryHistory = [];
       resetAxiomSelection();
       refreshAxiomMarkers();
+      render();
       setBuildNote('');
     } catch (err) {
       setBuildNote(`Clear failed: ${err.message || err}`, 'error');
@@ -906,8 +1054,9 @@ async function loadStack() {
     if (!res.ok) return;
     const data = await res.json();
     applyStack(data);
-    if (paperBounds) replayStackIntoGeometry(data);
+    if (paperBounds) replayIntoGeometry(data);
     refreshAxiomMarkers();
+    render();
   } catch (err) {
     console.warn('Could not load axiom stack:', err);
   }
