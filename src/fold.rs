@@ -18,6 +18,11 @@ pub struct Frame {
     /// from M/V assignment when absent.
     #[serde(default, rename = "edges_foldAngle")]
     pub edges_fold_angle: Vec<Option<f64>>,
+    /// Project-local FOLD extension (not part of the spec): which stacked
+    /// Huzita axiom (0-based) produced this crease, so the 3D folder can
+    /// sequence stacked folds instead of driving them all off one global t.
+    #[serde(default, rename = "edges_foldStep")]
+    pub edges_fold_step: Vec<Option<usize>>,
     #[serde(default)] pub faces_vertices: Vec<Vec<usize>>,
 }
 
