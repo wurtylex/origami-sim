@@ -39,7 +39,7 @@ function findOrAddVertex(mesh, x, y) {
 // (coordinate-based edges + faces) — this is whatever frame Rust considers
 // the crease pattern, so we stay in sync with it regardless of file layout.
 export function fromRenderData(data) {
-  const mesh = { vertices: [], coordIndex: new Map(), faces: [], edgeKind: new Map() };
+  const mesh = { vertices: [], coordIndex: new Map(), faces: [], edgeKind: new Map(), edgeStep: new Map() };
 
   for (const e of data.edges) {
     const i = findOrAddVertex(mesh, e.x1, e.y1);
@@ -105,13 +105,16 @@ function splitFaceByLine(mesh, face, line, cutEdges) {
 
 // Pure: returns a new mesh with `solution`'s fold line cut into it as a real
 // crease, or the same `mesh` reference unchanged if the line doesn't cross
-// any face (so callers can detect a no-op via `===`).
-export function addCrease(mesh, solution, assignment) {
+// any face (so callers can detect a no-op via `===`). `stepIndex` tags the
+// new crease (and is carried onto any pre-existing edge it splits) so the
+// 3D folder can sequence folds in stack order — see edgeStep below.
+export function addCrease(mesh, solution, assignment, stepIndex) {
   const line = { a: solution.a, b: solution.b, c: solution.c };
   const next = {
     vertices: mesh.vertices.slice(),
     coordIndex: new Map(mesh.coordIndex),
     edgeKind: new Map(mesh.edgeKind),
+    edgeStep: new Map(mesh.edgeStep),
     faces: mesh.faces,
   };
 
@@ -135,13 +138,20 @@ export function addCrease(mesh, solution, assignment) {
   for (const [key, k] of cutEdges) {
     const [i, j] = key.split(',').map(Number);
     const kind = next.edgeKind.get(key) ?? 'U';
+    const step = next.edgeStep.get(key);
     next.edgeKind.delete(key);
+    next.edgeStep.delete(key);
     next.edgeKind.set(edgeKey(i, k), kind);
     next.edgeKind.set(edgeKey(k, j), kind);
+    if (step !== undefined) {
+      next.edgeStep.set(edgeKey(i, k), step);
+      next.edgeStep.set(edgeKey(k, j), step);
+    }
   }
 
   for (const [vA, vB] of creaseSegments) {
     next.edgeKind.set(edgeKey(vA, vB), assignment);
+    next.edgeStep.set(edgeKey(vA, vB), stepIndex);
   }
 
   return next;
@@ -150,10 +160,12 @@ export function addCrease(mesh, solution, assignment) {
 export function toFoldJson(mesh, { title } = {}) {
   const edges_vertices = [];
   const edges_assignment = [];
+  const edges_foldStep = [];
   for (const [key, kind] of mesh.edgeKind) {
     const [i, j] = key.split(',').map(Number);
     edges_vertices.push([i, j]);
     edges_assignment.push(kind);
+    edges_foldStep.push(mesh.edgeStep.get(key) ?? null);
   }
 
   return {
@@ -164,6 +176,7 @@ export function toFoldJson(mesh, { title } = {}) {
     vertices_coords: mesh.vertices.map(v => [v.x, v.y]),
     edges_vertices,
     edges_assignment,
+    edges_foldStep, // project-local FOLD extension: which stacked axiom (0-based) produced this crease, so the 3D folder can sequence stacked folds instead of driving them all off one global t
     faces_vertices: mesh.faces,
   };
 }

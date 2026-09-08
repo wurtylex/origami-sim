@@ -475,7 +475,11 @@ function commitSolutionToGeometry(solution, assignment = 'V', isReference = fals
   let prevPattern = creasePattern;
   let docRebuilt = false;
   if (!isReference) {
-    const updated = FoldMesh.addCrease(creasePattern, solution, assignment);
+    // Step index for 3D fold sequencing: only real folds get a crease in
+    // the mesh, so this must count past *real* commits, not every
+    // geometryHistory entry (reference creases never bump it).
+    const foldStep = geometryHistory.filter(e => !e.isReference).length;
+    const updated = FoldMesh.addCrease(creasePattern, solution, assignment, foldStep);
     docRebuilt = updated !== creasePattern;
     if (docRebuilt) {
       creasePattern = updated;

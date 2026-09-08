@@ -36,6 +36,9 @@ pub struct Simulator {
     pub distance_constraints: Vec<DistanceConstraint>,
     pub dihedral_constraints: Vec<DihedralConstraint>,
     pub current_t: f64,
+    /// Number of distinct stacked-axiom fold steps present in this frame's
+    /// creases (0 if none are tagged — e.g. a directly uploaded FOLD file).
+    pub num_steps: usize,
 }
 
 pub struct DistanceConstraint {
@@ -51,6 +54,8 @@ pub struct DihedralConstraint {
     pub target_angle: f64,
     pub is_crease: bool,
     pub compliance: f64,
+    /// Which stacked-axiom fold step this crease belongs to, if any.
+    pub fold_step: Option<usize>,
 }
 
 impl Simulator {
@@ -88,7 +93,7 @@ impl Simulator {
             }
         }
 
-        let mut cp_edge: HashMap<(usize, usize), (String, f64)> = HashMap::new();
+        let mut cp_edge: HashMap<(usize, usize), (String, f64, Option<usize>)> = HashMap::new();
         for (i, [a, b]) in frame.edges_vertices.iter().enumerate() {
             let kind = frame
                 .edges_assignment
@@ -104,7 +109,8 @@ impl Simulator {
                     _   =>  0.0,
                 },
             };
-            cp_edge.insert(key(*a, *b), (kind, target));
+            let fold_step = frame.edges_fold_step.get(i).and_then(|s| *s);
+            cp_edge.insert(key(*a, *b), (kind, target, fold_step));
         }
 
         let mut distance_constraints = Vec::new();
@@ -120,11 +126,11 @@ impl Simulator {
                 let (_, c) = tris[0];
                 let (_, d) = tris[1];
 
-                let (target, is_crease, compliance) = match cp_edge.get(&(a, b)) {
-                    Some((kind, tgt)) if kind == "M" || kind == "V" => {
-                        (*tgt, true, CREASE_BEND_COMPLIANCE)
+                let (target, is_crease, compliance, fold_step) = match cp_edge.get(&(a, b)) {
+                    Some((kind, tgt, step)) if kind == "M" || kind == "V" => {
+                        (*tgt, true, CREASE_BEND_COMPLIANCE, *step)
                     }
-                    _ => (0.0, false, FACE_BEND_COMPLIANCE),
+                    _ => (0.0, false, FACE_BEND_COMPLIANCE, None),
                 };
 
                 dihedral_constraints.push(DihedralConstraint {
@@ -132,9 +138,17 @@ impl Simulator {
                     target_angle: target,
                     is_crease,
                     compliance,
+                    fold_step,
                 });
             }
         }
+
+        let num_steps = dihedral_constraints
+            .iter()
+            .filter_map(|c| c.fold_step)
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
 
         Simulator {
             positions,
@@ -143,6 +157,7 @@ impl Simulator {
             distance_constraints,
             dihedral_constraints,
             current_t: 0.0,
+            num_steps,
         }
     }
 
@@ -160,6 +175,7 @@ impl Simulator {
 
     fn sub_step(&mut self, t: f64, dt: f64) {
         let n = self.positions.len();
+        let num_steps = self.num_steps;
         let prev_positions = self.positions.clone();
 
         for i in 0..n {
@@ -177,7 +193,11 @@ impl Simulator {
                 );
             }
             for (i, c) in self.dihedral_constraints.iter().enumerate() {
-                let rest = if c.is_crease { c.target_angle * t } else { 0.0 };
+                let rest = if c.is_crease {
+                    c.target_angle * local_fold_t(t, c.fold_step, num_steps)
+                } else {
+                    0.0
+                };
                 project_dihedral(
                     &mut self.positions, &self.inv_masses, c, rest, dt, &mut lambda_dihedral[i],
                 );
@@ -248,6 +268,21 @@ impl Simulator {
             .zip(count.iter())
             .map(|(s, c)| if *c > 0 { s / (*c as f64) } else { 0.0 })
             .collect()
+    }
+}
+
+/// Maps global fold progress `t` to a crease's own local progress so stacked
+/// axioms fold in sequence instead of all at once: a crease tagged with
+/// step `i` (of `num_steps` total) ramps 0→1 while `t` crosses its window
+/// `[i/num_steps, (i+1)/num_steps]`, and holds at 0 or 1 outside it.
+/// Untagged creases (no stack, e.g. an uploaded FOLD file) just track `t`.
+fn local_fold_t(t: f64, step: Option<usize>, num_steps: usize) -> f64 {
+    match step {
+        Some(i) if num_steps > 0 => {
+            let n = num_steps as f64;
+            ((t - i as f64 / n) * n).clamp(0.0, 1.0)
+        }
+        _ => t,
     }
 }
 
